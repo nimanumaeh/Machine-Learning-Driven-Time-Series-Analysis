@@ -326,7 +326,7 @@ def test_soup_runs_render_as_a_census(tmp_path):
     assert html.startswith("<!doctype html>") and "<title>BTC Soup Census</title>" in html
     data = json.loads(html.split('type="application/json">')[1].split("</script>")[0].replace("<\\/", "</"))
     shown = data["runs"][0]
-    assert shown["label"] == "125x sun, Landauer heat, digestion 80%"
+    assert shown["label"] == "125x sun, Landauer heat, digestion 80% (physics 1)"
     assert shown["bands"][0] == "1s" and len(shown["frames"]) == n
     last = shown["frames"][-1]
     assert last["energy"] == pytest.approx(float(w.equity().sum())) and last["matter"]["top"]

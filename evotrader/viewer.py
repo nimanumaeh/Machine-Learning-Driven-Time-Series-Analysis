@@ -578,7 +578,9 @@ def soup_label(meta):
         name += ", Landauer heat"
     if meta.get("digestion", 1.0) < 1:
         name += f", digestion {meta['digestion']:.0%}"
-    return name
+    if meta.get("matter"):
+        name += ", seeded with life"
+    return name + f" (physics {meta.get('physics', 1)})"
 
 
 def soup_page_data(run_dir, max_frames=400):
