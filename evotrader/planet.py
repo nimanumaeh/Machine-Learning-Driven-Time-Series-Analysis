@@ -91,9 +91,12 @@ class Planet:
         self.crowding = np.zeros((self.X, Y))
         self.t = 0.0
         # generic transduction for matter that reads the weather (soup.py): each stream's
-        # level and its change as z-scores, one byte each (128 = ordinary or unknown)
-        self.sense_bytes = np.full((Y, 2 * N_REC), 128, np.uint8)
-        self.sense_stats = np.zeros((Y, 2, N_REC, 2))           # level, change: EW mean, var
+        # level and its change, as the percentile of its own recent history (histogram
+        # equalization, as a fly's photoreceptors encode contrast: Laughlin 1981), one
+        # signed byte each: 0 is the median, -128..127 below to above, unknown reads 0
+        self.sense_window = 256
+        self.sense_bytes = np.zeros((Y, 2 * N_REC), np.uint8)
+        self.sense_hist = np.full((Y, 2, N_REC, self.sense_window), np.nan)
         self.sense_prev = np.full((Y, N_REC), np.nan)
         self.sense_n = np.zeros(Y, np.int64)
 
@@ -172,22 +175,22 @@ class Planet:
         self._run_observatories(y)
 
     def _transduce(self, y, level):
-        """How this tick of the weather feels, one byte per stream level and change."""
+        """How this tick of the weather feels: each stream's level and change, as a byte."""
         change = level - self.sense_prev[y]
         self.sense_prev[y] = level
-        z = np.full((2, N_REC), np.nan)
-        for k, (x, rate) in enumerate(((level, 1 / 1024), (change, 1 / 256))):
-            mean, var = self.sense_stats[y, k, :, 0], self.sense_stats[y, k, :, 1]
-            ok = np.isfinite(x)
-            first = ok & (var == 0) & (mean == 0)
-            d = np.where(ok, x - mean, 0.0)
-            mean[:] = np.where(first, np.where(ok, x, 0.0), mean + rate * d)
-            var[:] = np.where(first, 0.0, (1 - rate) * (var + rate * d * d))
-            with np.errstate(invalid="ignore", divide="ignore"):
-                z[k] = np.where(ok & (var > 0), (x - mean) / np.sqrt(var), np.nan)
+        x = np.stack([level, change])                             # (2, streams)
+        hist = self.sense_hist[y]
+        hist[:, :, self.sense_n[y] % self.sense_window] = x
         self.sense_n[y] += 1
-        b = np.round(128 + 32 * np.clip(np.nan_to_num(z, nan=0.0), -4, 3.97))
-        self.sense_bytes[y] = b.reshape(-1).astype(np.uint8)
+        ok = np.isfinite(hist)
+        with np.errstate(invalid="ignore"):
+            below = ((hist < x[..., None]) & ok).sum(-1)
+            same = ((hist == x[..., None]) & ok).sum(-1)
+        n = ok.sum(-1)
+        pct = np.where(n > 0, (below + 0.5 * same) / np.maximum(n, 1), 0.5)
+        pct = np.where(np.isfinite(x) & (n >= 16), pct, 0.5)
+        signed = np.clip(np.round(255 * pct - 127.5), -128, 127).astype(np.int64)
+        self.sense_bytes[y] = (signed % 256).astype(np.uint8).reshape(-1)
 
     def capacity(self):
         """How many organisms each place (x, y) can hold now."""

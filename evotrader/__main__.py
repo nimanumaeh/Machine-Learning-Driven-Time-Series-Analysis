@@ -27,7 +27,7 @@ from . import data, data_seconds, planet_run
 from .brains import NetBrain
 from .config import Config
 from .life import Life
-from .planet import Planet
+from .planet import MINUTE_TAU, Planet
 from .soup import Soup
 from .mind import RRBrain
 from .selfmade import SelfMadeBrain
@@ -237,13 +237,21 @@ def cmd_soup(args):
         print(f"resuming {args.run} at {_when(planet.t)} UTC")
     else:
         cfg = _config(args)
-        planet = Planet(width=args.width, seed=args.seed)
+        step_s = 60 if args.minutes else 1
+        planet = Planet(width=args.width, seed=args.seed,
+                        taus=MINUTE_TAU if args.minutes else None, step_s=step_s)
         matter = np.load(args.matter) if args.matter else None
         soup = Soup(cfg, planet, per_place=args.per_place, seed=args.seed,
-                    interactions=args.interactions, noise=args.noise, matter=matter, floor=args.rain)
-        meta = {"kind": "soup", "source": "synthetic" if args.synthetic else "seconds",
+                    interactions=args.interactions, noise=args.noise, matter=matter, floor=args.rain,
+                    max_exposure=args.max_exposure, heat=args.heat, digestion=args.digestion,
+                    quantum=args.bite)
+        store = args.store if args.store != "data/seconds" or not args.minutes else "data/market"
+        meta = {"kind": "soup", "source": "synthetic" if args.synthetic else "store",
+                "resolution_s": step_s, "taus": planet.taus.tolist(),
+                "max_exposure": args.max_exposure, "heat": args.heat, "digestion": args.digestion,
+                "bite": args.bite,
                 "days": args.synthetic, "null": args.null, "market_seed": args.market_seed,
-                "store": args.store, "symbol": args.symbol, "from": args.start, "until": args.until,
+                "store": store, "symbol": args.symbol, "from": args.start, "until": args.until,
                 "width": args.width, "per_place": args.per_place, "interactions": args.interactions,
                 "noise": args.noise, "matter": args.matter, "rain": args.rain, "seed": args.seed,
                 "config": cfg.to_dict(),
@@ -251,9 +259,12 @@ def cmd_soup(args):
         os.makedirs(args.run, exist_ok=True)
         with open(meta_path, "w") as f:
             json.dump(meta, f, indent=1)
+    step_s = meta.get("resolution_s", 1)
     if meta["source"] == "synthetic":
-        market = SyntheticMarket(planted=not meta["null"], seed=meta["market_seed"], step_s=1)
-        rows = market.stream(int(meta["days"] * 86_400))
+        market = SyntheticMarket(planted=not meta["null"], seed=meta["market_seed"], step_s=step_s)
+        rows = market.stream(int(meta["days"] * 86_400 / step_s))
+    elif step_s == 60:
+        rows = data.iter_rows(meta["store"], meta["symbol"], _ms(meta["from"]), _ms(meta["until"]))
     else:
         rows = data_seconds.iter_seconds(meta["store"], meta["symbol"], _ms(meta["from"]),
                                          _ms(meta["until"]))
@@ -384,6 +395,16 @@ def main(argv=None):
     p.add_argument("--noise", type=float, default=0.00024,
                    help="chance a byte flips, per epoch (as many interactions as sites)")
     p.add_argument("--matter", help="start from this matter (.npy of sites x bytes) instead of random")
+    p.add_argument("--minutes", action="store_true",
+                   help="live on the minute store (2017 on): latitudes from 1 minute to 2 weeks")
+    p.add_argument("--max-exposure", type=float, default=1.0,
+                   help="largest exposure matter can take (1: signals at no leverage; up to 125)")
+    p.add_argument("--heat", type=float, default=0.0,
+                   help="energy (USDT) each irreversible byte write costs the writing site")
+    p.add_argument("--bite", type=float, default=0.01,
+                   help="most energy (USDT) one T instruction moves")
+    p.add_argument("--digestion", type=float, default=1.0,
+                   help="share of energy taken from (or given to) another site that arrives")
     p.add_argument("--rain", type=float, default=0.0,
                    help="when the planet's energy falls below this share of the start, stakes fall "
                         "on dead sites (money put in); 0, the default, means energy only comes from BTC")

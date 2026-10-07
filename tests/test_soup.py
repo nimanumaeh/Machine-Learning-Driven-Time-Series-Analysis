@@ -3,8 +3,9 @@
 import numpy as np
 import pytest
 
-from evotrader.soup import (L, STEPS, census_of_matter, high_order_entropy, interact, neighbors,
-                            pair_up, replicates, run)
+from evotrader.soup import (BFF, L, STEPS, SYMMETRIC, assemble, census_of_matter, chemistry,
+                            disassemble, high_order_entropy, interact, neighbors, pair_up,
+                            replicates, run)
 
 
 def tape(*parts, n=8):
@@ -22,7 +23,7 @@ def execute(t, steps=STEPS, sense=(128,), wallet=(0.0, 0.0), selfs=((128, 128), 
     act = np.full(2, -1, np.int16)
     flow = np.zeros((2, 3))
     e, c = run(t, steps, s, s, np.array(selfs[0], np.uint8), np.array(selfs[1], np.uint8),
-               w, 0, 1, act, flow)
+               w, 0, 1, act, flow, 0.0, 1.0, 0.01, BFF)          # the ASCII chemistry of BFF
     return t, e, c, act, w, flow
 
 
@@ -66,19 +67,22 @@ def test_market_instructions_act_for_their_own_half():
 
 
 def test_transfers_conserve_money():
-    t, *_, w, flow = execute(tape(255, "T", n=8), wallet=(100.0, 50.0))   # take everything free
-    assert w.tolist() == [150.0, 0.0] and flow[0, 0] == 50.0 and flow[1, 1] == 50.0
-    t, *_, w, flow = execute(tape(64, "T", n=8), wallet=(100.0, 50.0))    # give half of its own
-    assert w.tolist() == [50.0, 100.0]
+    t, *_, w, flow = execute(tape(127, "T", n=8), wallet=(100.0, 50.0))   # +127: one full bite
+    assert w.tolist() == [100.01, 49.99] and flow[0, 0] == 0.01 and flow[1, 1] == 0.01
+    t, *_, w, flow = execute(tape(192, "T", n=8), wallet=(100.0, 50.0))   # -64: gives half a bite
+    assert w.tolist() == pytest.approx([99.995, 50.005])
+    t, *_, w, flow = execute(tape(0, "T", n=8), wallet=(100.0, 50.0))     # 0: nothing
+    assert w.tolist() == [100.0, 50.0]
     rng = np.random.default_rng(1)
     soup = rng.integers(0, 256, (64, L), dtype=np.uint8)
-    soup[:, :8] = np.frombuffer(b"T>T<T>T<", np.uint8)                  # lots of grabbing and giving
+    soup[:, :8] = assemble("T>T<T>T<")                                  # lots of grabbing and giving
     wallet = rng.uniform(0, 1000, 64)
     total = wallet.sum()
     flow = np.zeros((64, 3))
     pairs = pair_up(rng, 8, 8, rng.permutation(64), neighbors(8, 8))
     interact(soup, pairs, STEPS, np.full((64, 4), 128, np.uint8), np.full((64, 2), 128, np.uint8),
-             wallet, np.full(64, -1, np.int16), flow, np.zeros((64, 2), np.int64))
+             wallet, np.full(64, -1, np.int16), flow, np.zeros((64, 2), np.int64), 0.0, 1.0, 50.0,
+             SYMMETRIC)
     assert wallet.sum() == pytest.approx(total) and (wallet >= -1e-9).all()
     assert flow[:, 0].sum() == pytest.approx(flow[:, 1].sum()) and flow.sum() > 0
 
@@ -86,8 +90,10 @@ def test_transfers_conserve_money():
 def test_a_copier_copies_itself_into_its_neighbor():
     # count head 1 out to the neighbor's half, then copy byte after byte until a zero
     prog = [64] + list(b"[}-].>}[.>}]") + [ord("x")] * (L - 13)
-    assert replicates(np.array(prog, np.uint8)) > 0.95
-    assert replicates(np.frombuffer(b"x" * L, np.uint8)) < 0.05   # inert matter copies nothing
+    assert replicates(np.array(prog, np.uint8), table=BFF) > 0.95
+    assert replicates(np.frombuffer(b"x" * L, np.uint8), table=BFF) < 0.05   # inert matter copies nothing
+    sym = assemble([64] + list("[}-].>}[.>}]") + ["x"] * (L - 13))   # the same program, other chemistry
+    assert replicates(sym, table=SYMMETRIC) > 0.95
 
 
 def test_neighbors_stay_on_the_planet():
@@ -136,9 +142,10 @@ def live(pl, w, rows):
 
 def test_without_orders_energy_only_moves_between_sites():
     S = 2 * 8 * 8
-    grab_give = np.array([200, ord("T"), ord(">"), ord("T"), ord(">"), 40, ord("<"), ord("T")], np.uint8)
-    matter = np.tile(np.resize(grab_give, L), (S, 1))              # grabbing and giving, nothing else
-    pl, w = world(matter=matter, noise=0.0)
+    grab = np.resize(assemble([100, "T", "x", "T"]), L)          # positive: take
+    give = np.resize(assemble([200, "T", "x", "T"]), L)          # negative: give
+    matter = np.where((np.arange(S) % 2 == 0)[:, None], grab, give)   # takers beside givers
+    pl, w = world(matter=matter, noise=0.0, quantum=50.0)
     live(pl, w, synthetic_rows(300, seed=1, step_s=1, start_ms=DAY0))
     assert w.counts["orders"] == 0 and w.flow[:, 0].sum() > 0
     assert w.equity().sum() == pytest.approx(w.injected)          # nothing made, nothing lost
@@ -148,14 +155,14 @@ def test_without_orders_energy_only_moves_between_sites():
 def test_orders_fill_at_the_next_open_exactly():
     rows = synthetic_rows(200, seed=2, step_s=1, start_ms=DAY0)
     S = 2 * 8 * 8
-    matter = np.tile(np.resize(np.frombuffer(bytes([192]) + b"A" + b"x" * 62, np.uint8), L), (S, 1))
+    matter = np.tile(assemble([64, "A"] + ["x"] * 62), (S, 1))
     pl, w = world(matter=matter, noise=0.0, max_exposure=125)
     r0 = rows[0]
     w.step(r0, pl.step(r0))                                        # matter decides: about 10x long
     assert np.isfinite(w.pending).any() and not w.acct.q.any()
     i = int(np.nonzero(np.isfinite(w.pending) & (w.site_y == 0))[0][0])   # an equator site
     x = w.pending[i]
-    assert x == pytest.approx(exposure_of(192))
+    assert x == pytest.approx(exposure_of(64))
     r1 = rows[1]
     w.step(r1, pl.step(r1))
     fill = r1[C["open"]] + Config().half_spread
@@ -182,9 +189,9 @@ def test_senses_exist_only_where_the_stream_does():
     pl, w = world(width=4, per_place=4)
     live(pl, w, synthetic_rows(400, seed=3, step_s=1, start_ms=DAY0))
     absent = ~w.mask
-    assert absent.any() and (w.senses[absent] == 128).all()
+    assert absent.any() and (w.senses[absent] == 0).all()          # nothing there reads as ordinary
     present = w.mask & (w.site_y[:, None] == 0)
-    assert (w.senses[present] != 128).mean() > 0.5
+    assert (w.senses[present] != 0).mean() > 0.5
 
 
 def test_the_soup_world_resumes_exactly():
@@ -204,13 +211,14 @@ def test_the_soup_world_resumes_exactly():
 def test_exposure_bytes_round_trip():
     for x in (-125, -10, -1, -0.05, 0, 0.04, 2.4, 10, 125):
         assert exposure_of(byte_of_exposure(x)) == pytest.approx(x, rel=0.05, abs=0.02)
+    assert exposure_of(0) == 0 and exposure_of(64) == -exposure_of(192) > 0   # 0 is stillness
 
 
 def test_a_latitude_trades_only_at_its_own_tick():
     rows = synthetic_rows(12, seed=2, step_s=1, start_ms=DAY0)
     S = 2 * 8 * 8
-    matter = np.tile(np.resize(np.frombuffer(bytes([192]) + b"A" + b"x" * 62, np.uint8), L), (S, 1))
-    pl, w = world(matter=matter, noise=0.0)                        # at most 1x: byte 192 is about 0.42
+    matter = np.tile(assemble([64, "A"] + ["x"] * 62), (S, 1))
+    pl, w = world(matter=matter, noise=0.0)                        # at most 1x: byte 64 is about 0.42
     acted_at, filled_at = np.full(w.S, -1), np.full(w.S, -1)
     for k, r in enumerate(rows):
         w.step(r, pl.step(r))
@@ -231,7 +239,7 @@ def test_writing_costs_heat_and_matter_without_energy_is_inert():
 
     def go(t, wallet, heat):
         w, flow = np.array(wallet), np.zeros((2, 3))
-        run(t, STEPS, s, s, me, me, w, 0, 1, np.full(2, -1, np.int16), flow, heat)
+        run(t, STEPS, s, s, me, me, w, 0, 1, np.full(2, -1, np.int16), flow, heat, 1.0, 0.01, BFF)
         return t, w, flow
 
     free, _, _ = go(prog.copy(), [0.0, 0.0], 0.0)
@@ -240,3 +248,31 @@ def test_writing_costs_heat_and_matter_without_energy_is_inert():
     assert w[0] == pytest.approx(0.25) and flow[0, 2] == pytest.approx(0.75)   # ...paid write by write
     poor, w, flow = go(prog.copy(), [0.1, 0.0], 0.25)       # cannot afford a single write
     assert np.array_equal(poor, prog) and w[0] == 0.1 and flow.sum() == 0      # inert
+
+
+def test_transfers_lose_what_digestion_does_not_keep():
+    s, me = np.array([128], np.uint8), np.array([128, 128], np.uint8)
+    w, flow = np.array([0.0, 100.0]), np.zeros((2, 3))
+    run(tape(127, "T", n=8), STEPS, s, s, me, me, w, 0, 1, np.full(2, -1, np.int16), flow, 0.0, 0.8, 10.0,
+        BFF)
+    assert w.tolist() == pytest.approx([8.0, 90.0])          # took a bite of 10, kept 8
+    assert flow[0, 2] == pytest.approx(2.0)                   # the rest dissipated
+    w = np.array([0.0, 100.0])
+    run(tape(127, "[T]", n=8), STEPS, s, s, me, me, w, 0, 1, np.full(2, -1, np.int16),
+        np.zeros((2, 3)), 0.0, 1.0, 10.0, BFF)
+    assert w.tolist() == pytest.approx([100.0, 0.0])         # draining takes a loop
+
+
+def test_the_symmetric_chemistry_has_no_lean():
+    ops = np.nonzero(SYMMETRIC)[0]
+    assert len(ops) == 14 and abs(ops.mean() - 128) < 1e-9     # code read as data averages to flat
+    assert (np.abs(ops.astype(int) - 128) >= 64).all()         # and readings near 128 stay inert
+    assert set(np.nonzero(chemistry("bff", market=False))[0]) == set(b"<>{}+-.,[]")
+    assert disassemble(assemble("[.>}]S")) == "[.>}]S"
+
+
+def test_an_instruction_never_reads_itself():
+    t, *_, act, w, f = execute(tape("A", n=8))                 # head 0 sits on the A being executed
+    assert list(act) == [0, -1]                                # it acts on nothing: stays flat
+    t, *_, act, w, flow = execute(tape("T", n=8), wallet=(10.0, 10.0))
+    assert w.tolist() == [10.0, 10.0]

@@ -19,7 +19,8 @@ import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from evotrader.soup import L, STEPS, census_of_matter, interact, neighbors, pair_up  # noqa: E402
+from evotrader.soup import (L, STEPS, census_of_matter, chemistry, interact, neighbors,  # noqa: E402
+                           pair_up)
 
 
 def main():
@@ -30,7 +31,13 @@ def main():
     ap.add_argument("--rows", type=int, default=8)
     ap.add_argument("--mutation", type=float, default=0.00024, help="chance a byte flips, per epoch")
     ap.add_argument("--every", type=int, default=250)
+    ap.add_argument("--chemistry", choices=("bff", "symmetric"), default="bff",
+                    help="bff: the ASCII chemistry of the paper")
+    ap.add_argument("--market", action="store_true",
+                    help="keep the market instructions (inert here, but S and E still overwrite bytes)")
+    ap.add_argument("--save", help="save the soup here (.npy) when life appears")
     args = ap.parse_args()
+    table = chemistry(args.chemistry, market=args.market)
     X, Y = args.width, args.rows
     S = X * Y
     rng = np.random.default_rng(args.seed)
@@ -46,13 +53,13 @@ def main():
     copies = []
     for epoch in range(1, args.epochs + 1):
         interact(soup, pair_up(rng, X, Y, rng.permutation(S), offs), STEPS, senses, selfs,
-                 wallet, act, flow, stats)
+                 wallet, act, flow, stats, 0.0, 1.0, 0.01, table)
         copies.append(stats[:, 1].mean())
         k = rng.poisson(args.mutation * S * L)
         if k:
             soup.reshape(-1)[rng.integers(S * L, size=k)] = rng.integers(0, 256, size=k, dtype=np.uint8)
         if epoch % args.every == 0:
-            c = census_of_matter(soup, top=3)
+            c = census_of_matter(soup, top=3, table=table)
             top = c["top"][0]
             print(f"epoch {epoch:6d}  {time.time() - t0:6.0f}s  entropy {c['entropy']:6.3f}  distinct {c['distinct']:5d}"
                   f"  copies/interaction {np.mean(copies[-args.every:]):7.1f}  top tape x{top[1]}"
@@ -60,8 +67,10 @@ def main():
             if c["entropy"] > 1.0:
                 print("\ntransition: the most common programs")
                 for text, n, rep in c["top"]:
-                    shown = "".join(ch if ch in "<>{}+-.,[]SEAT" else "·" for ch in text)
-                    print(f"  x{n:5d}  copies itself {rep:4.0%}  {shown}")
+                    print(f"  x{n:5d}  copies itself {rep:4.0%}  {text}")
+                if args.save:
+                    np.save(args.save, soup)
+                    print(f"soup saved to {args.save}")
                 return
 
 
