@@ -108,9 +108,27 @@ The same search with the market instructions included found nothing in about 10�
 
 This run used soup physics 1's way of pairing (every tape starts one interaction an epoch, one after another). Physics 2 pairs sites by claims, all at once, and can run the same search at the scale of the original paper (2^17 tapes) on a GPU.
 
+### Hosts and parasites
+
+The replicator family was translated into the market soup's chemistry, instruction for instruction (`soup.translate`). It still writes its exact reverse into a neighbor there. Then 64 replicators were planted among 448 random tapes: a small market soup of 512 sites, physics 2, Landauer heat, synthetic minutes. Counting tapes that really copy themselves:
+
+| Hours | 0 | 8 | 24 | 40 | 48 | 64 | 80 | 96 | ... | 7 days |
+|---|---|---|---|---|---|---|---|---|---|---|
+| Replicators, no noise | 63 | 403 | 417 | 230 | 101 | 41 | 13 | 116 | | 512 (all) |
+
+The replicators take over fast. Then a variant missing the copy loop's closing brackets spreads among them:
+
+`·[<·····,······}·······························}······,······<[<`
+
+Alone it copies nothing. When it starts a meeting with a replicator, it leaves the heads where the replicator's own copy loop then writes the variant's code over the replicator. It is a parasite that uses its host's copier, as in Tierra.
+
+Hosts boom, parasites boom on the hosts, hosts crash, parasites starve with them, and hosts recover. These are host–parasite cycles that nobody designed.
+
+With noise at the default rate, the first crash is final in a world this small: there is no refuge left to recover from. The same happened in a seeded world of 4,096 sites over real minutes (2021 on). Spatial models of hosts and parasites persist when space is large enough to hold refuges, which is what GPU-sized worlds are for (`docs/gpu.md`).
+
 ## 7. Open questions
 
-- **Life meets the market.** Seed a market soup with the replicators above and see whether selection turns copying into trading.
+- **Life meets the market.** In worlds large enough for hosts and parasites to persist, does selection turn copying into trading?
 - **Calibrating heat.** Heat sets how much complexity can pay for itself. The gentle (no heat) and Landauer worlds are run side by side to see what it changes.
 - **Compute.** With physics 2 the CPU needs about 0.6 ms a tick at 4,096 sites (21 minutes for 4 years of minutes); 1-second data has 60 times more ticks. A GPU runs every site at once (`docs/gpu.md`).
 

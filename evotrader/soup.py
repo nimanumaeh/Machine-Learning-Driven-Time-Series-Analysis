@@ -106,6 +106,23 @@ def disassemble(tape, table=SYMMETRIC):
     return "".join(MNEMONIC[table[b]] if table[b] else "·" for b in np.asarray(tape, np.uint8))
 
 
+def translate(matter, source=BFF, target=SYMMETRIC):
+    """The same programs in another chemistry: each instruction becomes the byte that means
+    it there, zero stays zero, and any other inert byte that would mean something there
+    moves to the nearest byte that does not."""
+    m = np.asarray(matter, np.uint8)
+    code = {op: b for b, op in enumerate(target) if op}
+    inert = np.nonzero(target == 0)[0]
+    inert = inert[inert > 0]
+    lut = np.arange(256, dtype=np.uint8)
+    for b in range(256):
+        if source[b]:
+            lut[b] = code.get(int(source[b]), inert[np.argmin(np.abs(inert - b))])
+        elif b and target[b]:
+            lut[b] = inert[np.argmin(np.abs(inert - b))]
+    return lut[m]
+
+
 _run = njit(cache=True)(run_tape)
 
 
@@ -148,17 +165,36 @@ def replicates(tape, steps=STEPS, partner=None, table=SYMMETRIC):
     return float((joined[n:] == np.asarray(tape, np.uint8)).mean())
 
 
-def census_of_matter(soup, top=8, table=SYMMETRIC):
-    """The most common tapes, how much of the soup they fill, and whether they replicate."""
-    uniq, counts = np.unique(soup, axis=0, return_counts=True)
+def census_of_matter(soup, top=8, table=SYMMETRIC, sample=16384):
+    """The most common tapes, how much of the soup they fill, and whether they replicate.
+
+    High-order entropy and the share of instructions are measured on at most `sample`
+    tapes, evenly spaced over the planet (compressing a soup of millions of tapes would
+    take longer than living).
+    """
+    soup = np.ascontiguousarray(soup, np.uint8)
+    _, first, counts = np.unique(tape_hashes(soup), return_index=True, return_counts=True)
     order = np.argsort(-counts)[:top]
+    some = soup if len(soup) <= sample else soup[np.linspace(0, len(soup) - 1, sample).astype(np.int64)]
     return {
-        "distinct": int(len(uniq)),
-        "instructions": float((table[soup] > 0).mean()),
-        "top": [(disassemble(uniq[j], table), int(counts[j]), replicates(uniq[j], table=table))
+        "distinct": int(len(counts)),
+        "instructions": float((table[some] > 0).mean()),
+        "top": [(disassemble(soup[first[j]], table), int(counts[j]), replicates(soup[first[j]], table=table))
                 for j in order],
-        "entropy": high_order_entropy(soup),
+        "entropy": high_order_entropy(some),
     }
+
+
+def tape_hashes(soup):
+    """A 64-bit fingerprint of each tape (equal tapes, equal fingerprints; others collide
+    with odds of about one in 10^19 a pair)."""
+    words = np.ascontiguousarray(soup, np.uint8).view(np.uint64)
+    h = np.zeros(len(soup), np.uint64)
+    with np.errstate(over="ignore"):
+        for j in range(words.shape[1]):
+            h = (h ^ words[:, j]) * np.uint64(0x9E3779B97F4A7C15)
+            h ^= h >> np.uint64(29)
+    return h
 
 
 class Primordial:
@@ -480,5 +516,6 @@ class Soup:
 
 
 __all__ = ["L", "STEPS", "PHYSICS", "BFF", "SYMMETRIC", "MNEMONIC", "chemistry", "assemble", "disassemble",
+           "translate",
            "run", "neighbors", "high_order_entropy", "replicates", "census_of_matter", "Primordial",
            "Soup", "signed", "unsigned", "exposure_of", "byte_of_exposure", "byte_of_energy"]
