@@ -142,3 +142,43 @@ In the first version, a conscious episode also picked an exploratory move at ran
 - **The fix, kept since.**
   - Both modes act on the organism's values.
   - Every episode raises the gate's threshold a little, and episodes that improve grip lower it. This makes consciousness costly, as Vervaeke says it is, and makes the gate an opponent process between that cost and what episodes pay.
+
+### Ten days on the corrected planet
+
+| World | Alive at the end | Born | Died | Generations | Largest family | Planet net | Before fees and funding | Fees | Liquidations | Holding BTC instead |
+|---|---|---|---|---|---|---|---|---|---|---|
+| planted | 1,120 | 460 | 340 | 10 | 63 | −101,933 (−10.2%) | −35,029 | 67,607 | 151 | +2.8% |
+| null | 1,143 | 353 | 236 | 8 | 35 | −90,040 (−8.8%) | −25,986 | 64,017 | 92 | +4.6% |
+| habits only (planted market) | 1,193 | 544 | 346 | 12 | 72 | −96,876 (−9.7%) | −27,776 | 69,706 | 150 | +2.8% |
+
+**It behaves like a living world.**
+- Every population grew past its 1,000 founders by births alone. The planted and habits-only worlds never needed a newcomer, and the null world needed 26.
+- Families formed. The largest reached 63 members over 10 generations in the planted world, and 72 over 12 in the habits-only world.
+- Latitudes filled and emptied unevenly.
+  - In both worlds with consciousness, the 10-minute latitude emptied: 66 organisms (planted) and 27 (null), from about 125.
+  - It did not empty in the habits-only world (154), where nobody migrates.
+  - Fast latitudes (5 to 30 seconds) filled up.
+- The gate learned to quiet consciousness where it did not pay.
+  - At 30 seconds, the conscious share fell from 12% to 3%, and at 2 minutes from 22% to 10%.
+  - The median threshold rose from 1.5 to 2.55.
+  - The slow latitudes became more conscious over time (6 hours: 3% to 46%), but only because they need 16 harvests before the gate can open at all, and those took days.
+- Culture was built and mostly fell. Over 21,000 observatories were built in each world with consciousness. The longest-standing lasted about 200 hours.
+  - In the planted world, two of the six oldest read crowding streams: a premium level, `z256(smooth256(premium))`, and a positioning change.
+  - In the null world, the oldest read price, the clocks and volume.
+  - Six per world is an anecdote, not evidence.
+
+**It does not make money, and it did not find the planted effect in ten days.**
+- **Every world lost about 9 to 10% while holding BTC would have gained 3 to 5%.**
+  - Fees were two thirds of the loss.
+  - Before costs, the trading itself lost about 3%.
+  - Liquidations (92 to 151) show leverage mattered.
+- **The families that grew rich did it with leverage, not skill.** The richest families held 1.5 to 1.95 times their founder's stake, mostly at 6x to 18x leverage. Children of successful parents did worse than founders: a median of −7% to −9% since birth, against −1% to −2%. That is regression to the mean.
+- **Relevance did not concentrate on the planted streams.** Salience on the crowding streams, relative to how much perception organisms gave them, was 0.75 to 1.6 in the planted world and 0.6 to 2.1 in the null world, with no consistent difference. Everywhere, organisms found their price streams most salient (1.2 to 2.2 times their share). That is natural: what a leveraged position is worth depends first on the price path.
+- **Consciousness did not pay.** The habits-only world shares the planted world's weather and founders. It did slightly better on every measure: money, births, generations, and how many organisms' values carried any evidence (701 against 592).
+
+**Why, as far as we can tell.**
+1. **Ten days is short where the planted effect lives.** The crowding effect works over hours, at the 10-minute to 6-hour latitudes. There, ten days are only 40 to 1,440 harvests. The minute-world agents needed 120 days to concentrate salience, and only in some seeds.
+2. **A conscious rebuild discards learning.** A rebuilt organ starts cold, and the weights learned through the organ it replaces are let go. The gate's cost now makes episodes rarer, but each one still sets the organism back.
+3. **Over ten days, leverage decides who lives.** Selection rewarded lucky leverage, as it will on any short horizon. Selecting for skill needs time for luck to average out.
+
+**What would change the picture:** months of history instead of days, real data, and a higher-order mode that keeps what it has learned when it reorganizes. These are the next experiments. A year of 1-second data at this population is about two and a half days of one CPU core.
