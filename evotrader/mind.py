@@ -69,7 +69,9 @@ class RRBrain:
         self.salience = np.full((S, B), 1.0 / B)
         self.frame = np.zeros((S, B, self.K))
         self.vcal = np.ones(S)                         # realised / modelled variance
-        self.grip = np.zeros(S)
+        self.grip = np.zeros(S)                        # grip_drift + grip_vol
+        self.grip_drift = np.zeros(S)                  # does my sense of direction hold?
+        self.grip_vol = np.zeros(S)                    # is the world as wild as I think?
         self.loss_fast = np.zeros(S)
         self.loss_slow = np.zeros(S)
         self.lp = np.zeros(S)
@@ -114,8 +116,10 @@ class RRBrain:
             self.loss_fast[idx] = np.where(first, loss, self.loss_fast[idx] + (loss - self.loss_fast[idx]) / 30)
             self.loss_slow[idx] = np.where(first, loss, self.loss_slow[idx] + (loss - self.loss_slow[idx]) / 300)
             self.lp[idx] = self.loss_slow[idx] - self.loss_fast[idx]
-            edge = -loss - _logpdf(y_mu, 0.0, naive)    # log-score gain over a naive guess
-            self.grip[idx] += (edge - self.grip[idx]) / 100
+            flat = _logpdf(y_mu, 0.0, sd)               # same volatility, no direction
+            self.grip_drift[idx] += ((-loss - flat) - self.grip_drift[idx]) / 100
+            self.grip_vol[idx] += ((flat - _logpdf(y_mu, 0.0, naive)) - self.grip_vol[idx]) / 100
+            self.grip[idx] = self.grip_drift[idx] + self.grip_vol[idx]
             self._rls(idx, phi, np.stack([y_mu, y_sg], 1))
             self.q_head[idx] = (h + 1) % self.Q
             self.q_len[idx] -= 1
@@ -321,7 +325,8 @@ class RRBrain:
         self.recent_n[i] = self.recent_pos[i] = 0
         self.salience[i] = 1.0 / B
         self.frame[i] = 0.0
-        self.grip[i] = self.loss_fast[i] = self.loss_slow[i] = self.lp[i] = 0.0
+        self.grip[i] = self.grip_drift[i] = self.grip_vol[i] = 0.0
+        self.loss_fast[i] = self.loss_slow[i] = self.lp[i] = 0.0
         self.vcal[i] = 1.0
         self.decisions[i] = 0
 
@@ -356,6 +361,7 @@ class RRBrain:
             return
         for arr in (self.att, self.age, self.w, self.P, self.s2, self.nupd, self.recent,
                     self.recent_n, self.recent_pos, self.salience, self.frame, self.grip, self.vcal,
+                    self.grip_drift, self.grip_vol,
                     self.loss_fast, self.loss_slow, self.lp):
             arr[child] = arr[parent]
         self.missing[child] = 0
@@ -394,6 +400,8 @@ class RRBrain:
         learned = wild[self.nupd[wild] > 50]
         return {
             "grip": float(np.median(self.grip[learned])) if len(learned) else None,
+            "grip_drift": float(np.median(self.grip_drift[learned])) if len(learned) else None,
+            "grip_vol": float(np.median(self.grip_vol[learned])) if len(learned) else None,
             "learning_progress": float(np.median(self.lp[learned])) if len(learned) else None,
             "salience_by_stream": dict(sorted(streams.items(), key=lambda kv: -kv[1])),
             "top_aspects": [(NAMES[k], float(weight[k])) for k in top if weight[k] > 0],

@@ -42,7 +42,8 @@ def summary(w, day):
             s["control_net_pnl"] / max(s["control_injected"], 1),
         "fees": s["totals"]["fees"], "liquidations": s["totals"]["liquidations"],
         "births": s["counts"]["births"], "deaths": s["counts"]["starved"],
-        "grip": m.get("grip"), "crowd_salience": crowd_sal, "crowd_attention": crowd_att,
+        "grip": m.get("grip"), "grip_drift": m.get("grip_drift"), "grip_vol": m.get("grip_vol"),
+        "crowd_salience": crowd_sal, "crowd_attention": crowd_att,
         "risk_salience_exposed": float(risk_sal[hi].mean()) if hi.any() else None,
         "risk_salience_flat": float(risk_sal[lo].mean()) if lo.any() else None,
     }

@@ -51,8 +51,9 @@ def full_report(world, store=None, top=10):
     mind = s.get("mind") or {}
     if mind.get("salience_by_stream"):
         p("")
-        p(f"What the population finds salient (grip {mind['grip'] if mind['grip'] is None else round(mind['grip'], 3)},"
-          f" learning progress {mind['learning_progress'] if mind['learning_progress'] is None else round(mind['learning_progress'], 3)}):")
+        r3 = lambda v: "n/a" if v is None else f"{v:+.3f}"
+        p(f"What the population finds salient (grip on direction {r3(mind.get('grip_drift'))},"
+          f" on volatility {r3(mind.get('grip_vol'))}, learning progress {r3(mind['learning_progress'])}):")
         p("  streams: " + ", ".join(f"{k} {v:.0%}" for k, v in list(mind["salience_by_stream"].items())[:8]))
         p("  aspects: " + ", ".join(f"{n} {v:.0%}" for n, v in mind["top_aspects"][:6]))
     p(f"  median growth per day, agents alive >= 1 day: {_pct_day(s['mature_daily_log_growth'])}")
