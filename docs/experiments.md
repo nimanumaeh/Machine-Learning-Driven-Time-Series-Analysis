@@ -107,3 +107,38 @@ To find the planted effect they must *construct* a crowding detector, for exampl
 - Longer runs: real history once it is reachable.
 - More seeds.
 - Letting evolution shape the perceptual physiology (operators and time constants).
+
+## Results: the planet (very many organisms on a world made of 1-second data)
+
+Reproduce with:
+
+```bash
+python -m evotrader planet --synthetic 10 --run runs/planet-planted
+python -m evotrader planet --synthetic 10 --null --run runs/planet-null
+python -m evotrader planet --synthetic 10 --no-higher-order --run runs/planet-habits
+python experiments/planet_check.py runs/planet-planted runs/planet-null runs/planet-habits
+```
+
+- **World.** A synthetic 1-second market (the planted crowding effect, or the null world) feeds a planet of 32 longitudes and 8 latitudes (1 second to 1 day). A place holds 12 organisms at normal liquidity, about 3,000 in all.
+- **Population.** 1,000 founders. Whenever the population falls below 1,000, newcomers arrive, each with 1,000 USDT counted as money put in.
+- **Duration.** 10 simulated days per world, about 1.5 hours of one CPU core each.
+- **Comparisons.**
+  - Planted against null: similar weather, but in the null world nothing can be predicted.
+  - Planted against habits-only (the higher-order mode switched off): identical weather and identical founders. The difference is only consciousness.
+
+### First attempt: consciousness that traded at random
+
+In the first version, a conscious episode also picked an exploratory move at random. The three worlds were stopped after one to two days:
+
+| World (days) | Planet net | Before fees and funding | Fees | Organisms that had learned anything |
+|---|---|---|---|---|
+| planted (1.8) | −49,649 | −105 | 49,687 | 137 of 1,000 |
+| null (1.9) | −52,632 | −4,981 | 47,730 | 145 of 1,000 |
+| habits only (0.8) | +2,914 | +10,556 | 7,711 | 321 of 1,012 |
+
+- **Fast organisms paid about 5% of their capital a day in fees.** Organisms at the 1-second to 2-minute latitudes made 100 to 250 trades a day.
+- **The random moves were pure cost.** Every organism already learns what all nine moves would have done, on every tick, so a random move teaches it nothing. Removing them cut fees at the fast latitudes about 30-fold in a 4-hour test.
+- **Frequent consciousness also disrupted learning.** The gate's lesson (did grip improve more than usual after an episode?) was mostly noise, so its threshold random-walked. Fast organisms opened it nearly as often as allowed and kept rebuilding organs before they could learn through them. The habits-only world had three times as many organisms whose values carried evidence.
+- **The fix, kept since.**
+  - Both modes act on the organism's values.
+  - Every episode raises the gate's threshold a little, and episodes that improve grip lower it. This makes consciousness costly, as Vervaeke says it is, and makes the gate an opponent process between that cost and what episodes pay.

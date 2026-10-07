@@ -101,7 +101,26 @@ def report(run):
               f"upkeep {o['integrity']:.0%}")
     who = learned(life, live)
     print(f"organisms whose values carry evidence: {len(who)} of {len(live)}")
+    families(life, live)
     return attention(life, who), life, live
+
+
+def families(life, live, stake=1000.0):
+    """Each founder's family: its living members' wealth against the founder's stake."""
+    roots, inv = np.unique(life.root[live], return_inverse=True)
+    wealth = np.bincount(inv, weights=life.equity(live))
+    size = np.bincount(inv)
+    grown = size > 1
+    multiple = wealth / stake
+    print(f"families: {len(roots)} alive, {grown.sum()} with more than one living member; "
+          f"{(multiple > 1).sum()} hold more than their founder's stake "
+          f"(median multiple {np.median(multiple):.3f})")
+    for j in np.argsort(-multiple)[:5]:
+        m = live[inv == j]
+        bands = np.bincount(life.y[m], minlength=len(TAU))
+        where = ", ".join(f"{BANDS[y]}: {n}" for y, n in enumerate(bands) if n)
+        print(f"  #{roots[j]}: {size[j]} alive, generation {life.gen[m].max()}, wealth {wealth[j]:,.0f} "
+              f"= {multiple[j]:.2f}x the stake, lives at {where}, leverage {np.median(life.lev[m]):.0f}x")
 
 
 def main(runs):
