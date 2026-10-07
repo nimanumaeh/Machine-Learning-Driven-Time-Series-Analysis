@@ -70,6 +70,7 @@ class TimeframeBook:
         closes = np.asarray(self.closes, dtype=np.float64)
         r = np.diff(np.log(closes))                     # HISTORY returns
         vol = r[-32:].std() + 1e-9
+        self.vol = vol                                  # per-candle volatility
         f = np.empty(N_FEATURES)
         for j, k in enumerate(_RET_LAGS):
             f[j] = r[-k:].sum() / (vol * np.sqrt(k))

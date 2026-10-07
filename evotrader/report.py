@@ -13,35 +13,46 @@ def _pct_day(dlg):
     return "   n/a" if dlg is None else f"{(np.exp(dlg) - 1) * 100:+6.3f}%"
 
 
+def _ret(pnl, base):
+    return f"{pnl / base * 100:+.1f}%" if base else "n/a"
+
+
 def _tf(s):
     return f"{s}s" if s < 60 else f"{s // 60}m" if s < 3600 else f"{s // 3600}h"
 
 
 def status_line(world):
     s = world.snapshot()
-    return (f"{_ts(s['t'])}  BTC {s['price']:>9.2f}  pop {s['population']:>4}"
-            f"  gen {s['max_generation']:>3}  net {s['net_pnl']:>+11.2f}"
-            f"  /day: evolved {_pct_day(s['mature_daily_log_growth'])}"
-            f" random {_pct_day(s['control_daily_log_growth'])}"
-            f" hold {_pct_day(s['bnh_daily_log_growth'])}")
+    return (f"{_ts(s['t'])}  BTC {s['price']:>9.1f}  pop {s['population']:>4}"
+            f" (L{s['long']:>3}/S{s['short']:>3})  gen {s['max_generation']:>3}"
+            f"  net {s['net_pnl']:>+11.0f} ({_ret(s['net_pnl'], s['injected'])})"
+            f"  random {_ret(s['control_net_pnl'], s['control_injected'])}"
+            f"  hold {s['bnh_return'] * 100:+.1f}%  liq {s['totals']['liquidations']}")
 
 
 def full_report(world, store=None, top=10):
     s = world.snapshot()
     out = []
     p = out.append
-    p(f"Ecosystem at {_ts(s['t'])} UTC   BTC {s['price']:.2f}")
-    p(f"  living agents {s['population']}  (max generation {s['max_generation']})")
-    c = s["counts"]
-    p(f"  immigrants {c['immigrants']}  births {c['births']}  "
-      f"starved {c['starved']}  outcompeted {c['outcompeted']}")
-    p(f"  play money: injected {s['injected']:.0f}  withdrawn by deaths {s['withdrawn']:.0f}"
-      f"  held {s['equity']:.0f}  ->  net PnL {s['net_pnl']:+.2f}")
+    p(f"Ecosystem at {_ts(s['t'])} UTC   BTC {s['price']:.1f}  (mark {s['mark']:.1f})")
+    p(f"  living agents {s['population']}: {s['long']} long, {s['short']} short,"
+      f" {s['population'] - s['long'] - s['short']} flat   (max generation {s['max_generation']})")
+    c, tot = s["counts"], s["totals"]
+    p(f"  newcomers {c['immigrants']}  born {c['births']}  died {c['starved']}"
+      f"  outcompeted {c['outcompeted']}  liquidations {tot['liquidations']}")
     p("")
-    p("Median growth per day (agents alive >= 1 day, after fees and metabolism):")
-    p(f"  evolved population  {_pct_day(s['mature_daily_log_growth'])}")
-    p(f"  random controls     {_pct_day(s['control_daily_log_growth'])}   <- luck baseline")
-    p(f"  buy and hold        {_pct_day(s['bnh_daily_log_growth'])}")
+    p("Play money (USDT):")
+    p(f"  handed out {s['injected']:>12.0f}   left by the dead {s['withdrawn']:>10.0f}"
+      f"   held now {s['equity']:>10.0f}")
+    p(f"  net PnL    {s['net_pnl']:>+12.0f}   ({_ret(s['net_pnl'], s['injected'])} of all capital handed out)")
+    p(f"  of which fees paid {tot['fees']:.0f}, funding paid {tot['funding']:+.0f}")
+    p(f"  random agents, same rules, no selection: {_ret(s['control_net_pnl'], s['control_injected'])}")
+    p(f"  holding 1x BTC since the start:           {s['bnh_return'] * 100:+.1f}%")
+    p(f"  median growth per day, agents alive >= 1 day: {_pct_day(s['mature_daily_log_growth'])}")
+    p("")
+    p("Leverage in the living population (median "
+      f"{s['median_leverage'] or 0:.0f}x): "
+      + "  ".join(f"{k} {v}" for k, v in s["leverage_bands"].items()))
     p("")
     p("Niches:")
     p("  timeframe  agents     equity  median equity/ref")
@@ -50,19 +61,20 @@ def full_report(world, store=None, top=10):
         p(f"  {_tf(int(tf)):>9}  {n['n']:>6}  {n['equity']:>9.0f}  {med:>17}")
     p("")
     rows = world.leaderboard(top)
-    p(f"Top {len(rows)} agents by growth/day (alive >= 1 day):")
-    p("     id  lineage  gen    tf    age(d)  lifetime x  per day  exposure  trades  kids")
+    p(f"Top {len(rows)} agents by growth per day (alive >= 1 day):")
+    p("     id  lineage  gen   tf   lev  margin  age(d)  lifetime x  per day"
+      "   pos BTC  trades  liq  kids")
     for r in rows:
-        p(f"  {r['id']:>5}  {r['root']:>7}  {r['generation']:>3}  {_tf(r['timeframe']):>4}"
-          f"  {r['age_days']:>8.1f}  {r['lifetime_growth']:>10.3f}  {_pct_day(r['daily_log_growth'])}"
-          f"  {r['exposure']:>8.2f}  {r['trades']:>6}  {r['children']:>4}")
+        p(f"  {r['id']:>5}  {r['root']:>7}  {r['generation']:>3}  {_tf(r['timeframe']):>3}"
+          f"  {r['leverage']:>3.0f}x  {r['margin_frac']:>6.2f}  {r['age_days']:>6.1f}"
+          f"  {r['lifetime_growth']:>10.3f}  {_pct_day(r['daily_log_growth'])}"
+          f"  {r['position_btc']:>+8.3f}  {r['trades']:>6}  {r['liquidations']:>3}  {r['children']:>4}")
     wild = world.alive & ~world.control
     if wild.any():
         roots, counts = np.unique(world.root_id[wild], return_counts=True)
-        order = np.argsort(-counts)[:5]
         p("")
         p("Largest living lineages:")
-        for k in order:
+        for k in np.argsort(-counts)[:5]:
             line = f"  lineage {roots[k]:>6}: {counts[k]} alive"
             if store is not None:
                 total = store.db.execute("SELECT COUNT(*) FROM agents WHERE root=?",

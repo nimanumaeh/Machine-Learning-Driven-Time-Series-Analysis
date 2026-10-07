@@ -1,6 +1,7 @@
-"""Command line: python -m evotrader {synth,download,evolve,live,report} ..."""
+"""Command line: python -m evotrader {download,synth,evolve,live,report} ..."""
 
 import argparse
+import datetime as dt
 import os
 import sys
 import time
@@ -14,75 +15,66 @@ from .store import Store, load_world
 from .world import World
 
 
+def _ms(day):
+    if not day:
+        return None
+    return int(dt.datetime.fromisoformat(day).replace(tzinfo=dt.timezone.utc).timestamp() * 1000)
+
+
+def _when(t):
+    return time.strftime("%Y-%m-%d %H:%M", time.gmtime(t))
+
+
 def _config(args):
     cfg = Config()
-    for name in ("capacity", "fee_bps", "slippage_bps", "metabolism_bps_per_day",
+    for name in ("capacity", "taker_fee", "half_spread", "max_leverage", "initial_capital",
                  "death_ratio", "repro_ratio", "n_control", "seed"):
         val = getattr(args, name, None)
         if val is not None:
             setattr(cfg, name, val)
-    if getattr(args, "allow_short", False):
-        cfg.allow_short = True
     return cfg
 
 
 def _add_config_args(p):
-    g = p.add_argument_group("ecosystem (defaults in evotrader/config.py)")
+    g = p.add_argument_group("environment (defaults in evotrader/config.py)")
+    g.add_argument("--taker-fee", dest="taker_fee", type=float,
+                   help="fraction of notional per fill, e.g. 0.0005 for 0.05%%")
+    g.add_argument("--half-spread", dest="half_spread", type=float, help="USDT")
+    g.add_argument("--max-leverage", dest="max_leverage", type=int)
+    g.add_argument("--initial-capital", dest="initial_capital", type=float)
     g.add_argument("--capacity", type=int)
-    g.add_argument("--fee-bps", dest="fee_bps", type=float)
-    g.add_argument("--slippage-bps", dest="slippage_bps", type=float)
-    g.add_argument("--metabolism", dest="metabolism_bps_per_day", type=float,
-                   help="cost of living, basis points of equity per day")
     g.add_argument("--death-ratio", dest="death_ratio", type=float)
     g.add_argument("--repro-ratio", dest="repro_ratio", type=float)
     g.add_argument("--controls", dest="n_control", type=int)
     g.add_argument("--seed", type=int)
-    g.add_argument("--allow-short", action="store_true")
-
-
-def cmd_synth(args):
-    n = int(args.days * 86400 / args.seconds)
-    data.write_csv(args.out, data.synthetic_bars(n, args.seconds, seed=args.seed))
-    print(f"wrote {n} synthetic {args.seconds}s bars to {args.out}")
 
 
 def cmd_download(args):
-    out = args.out or f"data/{args.symbol}_{data.interval_name(args.seconds)}.csv"
-    n = data.download(out, args.symbol, args.seconds, args.days, source=args.source)
-    print(f"{n} new bars appended to {out}")
+    n = data.build_market(args.out, start=args.start, assumed_funding=args.assumed_funding,
+                          cache_dir=args.cache)
+    print(f"{n} new bars appended to {args.out}")
+
+
+def cmd_synth(args):
+    n = int(args.days * 1440)
+    data.write_csv(args.out, (b + ("synthetic",) for b in data.synthetic_bars(n, seed=args.seed)))
+    print(f"wrote {n} synthetic 1-minute bars to {args.out}")
 
 
 def cmd_evolve(args):
     store = Store(args.run)
     if args.resume and os.path.exists(store.checkpoint_path):
         world = load_world(store.checkpoint_path)
-        print(f"resuming {args.run} at {time.strftime('%Y-%m-%d %H:%M', time.gmtime(world.t))}")
+        print(f"resuming {args.run} at {_when(world.t)} UTC")
     else:
         cfg = _config(args)
         world = World(cfg, data.detect_bar_seconds(args.data))
         store.set_meta("config", cfg.to_dict())
-    store.set_meta("mode", "replay")
-    run(world, data.iter_csv(args.data), store)
+    store.set_meta("mode", "history")
+    run(world, data.iter_csv(args.data, _ms(args.start), _ms(args.until)), store)
     print()
     print(full_report(world, store))
     store.close()
-
-
-def _warm_up(world, client, symbol, seconds):
-    """Prime every niche's candle history with recent real data."""
-    now = int(time.time() * 1000)
-    fine_start = (now - 40 * 60 * 1000) // 60000 * 60000
-    coarse_tf = [tf for tf in world.timeframes if tf % 60 == 0]
-    if coarse_tf:
-        span = (HISTORY + 2) * max(coarse_tf) * 1000
-        for b in data.api_bars(client, symbol, 60, fine_start - span, fine_start):
-            world.warm(b[0], 60000, *b[1:])
-    last = fine_start - seconds * 1000
-    for b in data.api_bars(client, symbol, seconds, fine_start, now - seconds * 1000):
-        world.warm(b[0], seconds * 1000, *b[1:])
-        last = b[0]
-    world.t = (last + seconds * 1000) / 1000.0
-    return last + seconds * 1000
 
 
 def cmd_live(args):
@@ -91,23 +83,26 @@ def cmd_live(args):
     if os.path.exists(store.checkpoint_path):
         world = load_world(store.checkpoint_path)
         start = int(world.t * 1000)
-        print(f"resuming live arena; catching up from "
-              f"{time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime(world.t))} UTC")
+        print(f"resuming {args.run}; catching up from {_when(world.t)} UTC")
     else:
         if args.seed_from:
             world = load_world(args.seed_from)
+            world.reset_market(60)
             print(f"seeding from {args.seed_from}: {int((world.alive & ~world.control).sum())} agents")
         else:
-            world = World(_config(args), args.seconds)
-        world.reset_market(args.seconds)
+            world = World(_config(args), 60)
         print("warming up candle histories from recent data...")
-        start = _warm_up(world, client, args.symbol, args.seconds)
+        bars = data.recent_bars((HISTORY + 2) * max(world.timeframes) // 60, client=client)
+        for b in bars:
+            world.warm(b[0], data.MINUTE, *b[1:6])
+        start = bars[-1][0] + data.MINUTE
+        world.t = start / 1000.0
         if args.seed_from:
             world.reset_economy()
         store.set_meta("config", world.cfg.to_dict())
     store.set_meta("mode", "live")
     print("live paper arena running (Ctrl-C to stop; rerun the same command to resume)")
-    run(world, data.live_bars(args.symbol, args.seconds, start_ms=start, client=client), store)
+    run(world, data.live_bars(start, client=client), store)
     print(full_report(world, store))
     store.close()
 
@@ -123,34 +118,33 @@ def main(argv=None):
     ap = argparse.ArgumentParser(prog="evotrader", description=__doc__)
     sub = ap.add_subparsers(dest="cmd", required=True)
 
-    p = sub.add_parser("synth", help="generate synthetic BTC-like bars for offline testing")
+    p = sub.add_parser("download", help="build the 1-minute BTCUSDT perpetual data set")
+    p.add_argument("--from", dest="start", default="2017-08-01")
+    p.add_argument("--out", default="data/BTCUSDT_perp_1m.csv")
+    p.add_argument("--assumed-funding", type=float, default=0.0001,
+                   help="funding per 8h charged before the perpetual existed (2017-2019)")
+    p.add_argument("--cache", default="data/raw", help="where raw archives are kept")
+    p.set_defaults(fn=cmd_download)
+
+    p = sub.add_parser("synth", help="synthetic BTC-like bars for testing offline")
     p.add_argument("--out", default="data/synthetic_1m.csv")
     p.add_argument("--days", type=float, default=60)
-    p.add_argument("--seconds", type=int, default=60)
     p.add_argument("--seed", type=int, default=0)
     p.set_defaults(fn=cmd_synth)
 
-    p = sub.add_parser("download", help="download historical Binance klines to CSV")
-    p.add_argument("--symbol", default="BTCUSDT")
-    p.add_argument("--seconds", type=int, default=60, help="bar size: 1 or 60 (1s / 1m)")
-    p.add_argument("--days", type=float, default=90)
-    p.add_argument("--source", choices=("auto", "archive", "api"), default="auto",
-                   help="archive = data.binance.vision bulk zips, api = REST")
-    p.add_argument("--out")
-    p.set_defaults(fn=cmd_download)
-
-    p = sub.add_parser("evolve", help="evolve a population on historical bars (the nursery)")
+    p = sub.add_parser("evolve", help="let a population live through historical bars")
     p.add_argument("--data", required=True)
-    p.add_argument("--run", default="runs/nursery")
+    p.add_argument("--run", default="runs/history")
+    p.add_argument("--from", dest="start", help="first day to use, e.g. 2017-08-17")
+    p.add_argument("--until", help="stop before this day (keep later data unseen)")
     p.add_argument("--resume", action="store_true")
     _add_config_args(p)
     p.set_defaults(fn=cmd_evolve)
 
-    p = sub.add_parser("live", help="run the population on live Binance data, forever")
-    p.add_argument("--run", default="runs/live")
-    p.add_argument("--seed-from", help="nursery run dir whose survivors move in")
-    p.add_argument("--symbol", default="BTCUSDT")
-    p.add_argument("--seconds", type=int, default=1, help="base bar size of the feed")
+    p = sub.add_parser("live", help="carry on in real time with live Binance data, forever")
+    p.add_argument("--run", default="runs/history",
+                   help="run to continue (catches up from where it stopped)")
+    p.add_argument("--seed-from", help="start a new run from this run's agents, fresh wallets")
     _add_config_args(p)
     p.set_defaults(fn=cmd_live)
 

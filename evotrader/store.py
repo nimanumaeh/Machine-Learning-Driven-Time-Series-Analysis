@@ -9,7 +9,8 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS agents (
     id INTEGER PRIMARY KEY, parent INTEGER, root INTEGER, generation INTEGER,
     timeframe INTEGER, control INTEGER, kind TEXT, born_t REAL, died_t REAL,
-    cause TEXT, growth REAL, trades INTEGER, fees REAL, children INTEGER,
+    cause TEXT, growth REAL, trades INTEGER, fees REAL, funding REAL,
+    liquidations INTEGER, children INTEGER, leverage REAL, margin_frac REAL,
     deadband REAL, sigma REAL, genome BLOB
 );
 CREATE INDEX IF NOT EXISTS agents_root ON agents(root);
@@ -38,17 +39,17 @@ class Store:
             if kind == "birth":
                 self.db.execute(
                     "INSERT OR REPLACE INTO agents (id, parent, root, generation, timeframe,"
-                    " control, kind, born_t, deadband, sigma, genome)"
-                    " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                    " control, kind, born_t, leverage, margin_frac, deadband, sigma, genome)"
+                    " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (e["id"], e["parent"], e["root"], e["generation"], e["timeframe"],
-                     int(e["control"]), e["kind"], e["t"], e["deadband"], e["sigma"],
-                     e["genome"]))
+                     int(e["control"]), e["kind"], e["t"], e["leverage"], e["margin_frac"],
+                     e["deadband"], e["sigma"], e["genome"]))
             elif kind == "death":
                 self.db.execute(
                     "UPDATE agents SET died_t=?, cause=?, growth=?, trades=?, fees=?,"
-                    " children=? WHERE id=?",
+                    " funding=?, liquidations=?, children=? WHERE id=?",
                     (e["t"], e["cause"], e["growth"], e["trades"], e["fees"],
-                     e["children"], e["id"]))
+                     e["funding"], e["liquidations"], e["children"], e["id"]))
             elif kind == "snapshot":
                 self.db.execute("INSERT OR REPLACE INTO snapshots VALUES (?, ?)",
                                 (e["t"], json.dumps(e)))
