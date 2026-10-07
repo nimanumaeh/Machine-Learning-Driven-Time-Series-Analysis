@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+# downloaded market data and run outputs (large, regenerable)
+data/
+runs/
