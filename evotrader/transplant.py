@@ -12,6 +12,7 @@ to be understood to be run.
 import numpy as np
 
 from .data import C
+from .physics import FEES, FUNDING
 from .planet import Planet
 from .selfmade import RECEPTORS
 from .soup import Soup
@@ -35,12 +36,11 @@ def sandbox(world, x, y, matter, sites=64, seed=0):
     pl0 = world.planet
     pl = Planet(width=1, seed=seed, taus=[int(pl0.taus[y])], step_s=pl0.step_s)
     pl.avail[0, 0] = pl0.avail[x, y]
-    rate = world.E / world.S                                   # interactions per site per row
+    rate = world.E / world.S                                   # sites waking per site per tick
     soup = Soup(world.cfg, pl, per_place=sites, seed=seed, interactions=max(1, int(round(rate * sites))),
-                noise=0.0, floor=0.0, steps=world.steps, matter=_fill(matter, sites),
-                kleiber=world.kleiber, max_exposure=world.max_exposure, heat=world.heat,
-                digestion=world.digestion, quantum=world.quantum)
-    soup.table = world.table
+                noise=0.0, steps=world.steps, matter=_fill(matter, sites), kleiber=world.kleiber,
+                max_exposure=world.max_exposure, heat=world.heat, digestion=world.digestion,
+                quantum=world.quantum, layout=world.layout)
     return pl, soup
 
 
@@ -49,20 +49,29 @@ def _fill(matter, sites):
     return m[np.arange(sites) % len(m)]
 
 
-def live(pl, soup, rows, every=60):
+def live(soup, rows, every=60):
     """Run the sandbox; sample its total energy, mean position and senses every `every` rows."""
+    rows = np.asarray(rows, np.float64)
     t, energy, position, senses, price = [], [], [], [], []
-    for k, row in enumerate(rows):
-        soup.step(row, pl.step(row))
-        if k % every == 0:
-            t.append(pl.t)
-            energy.append(float(soup.equity().sum()))
-            position.append(float(soup.exposure().mean()))
-            senses.append(pl.sense_bytes[0].copy())
-            price.append(float(row[C["close"]]))
+
+    def sample(row):
+        t.append(soup.t)
+        energy.append(float(soup.equity().sum()))
+        position.append(float(soup.exposure().mean()))
+        senses.append(soup.senses[0].copy())                   # what its matter perceives
+        price.append(float(row[C["close"]]))
+
+    start = 0
+    for k in range(0, len(rows), every):
+        soup.advance(rows[start:k + 1])
+        start = k + 1
+        sample(rows[k])
+    if start < len(rows):
+        soup.advance(rows[start:])
+        sample(rows[-1])
     return {"t": np.array(t), "energy": np.array(energy), "position": np.array(position),
             "senses": np.array(senses), "price": np.array(price),
-            "fees": float(soup.acct.fees.sum()), "funding": float(soup.acct.funding.sum()),
+            "fees": float(soup.acct[FEES].sum()), "funding": float(soup.acct[FUNDING].sum()),
             "heat": float(soup.flow[:, 2].sum()), "orders": soup.counts["orders"],
             "start": soup.stake * soup.S}
 
@@ -102,7 +111,7 @@ def summary(result):
 
 def evaluate(world, rows, k=10, sites=64, baseline=5, seed=0, log=print):
     """Transplant the k richest organisms and `baseline` random tapes; compare on `rows`."""
-    rows = list(rows)
+    rows = rows if isinstance(rows, np.ndarray) else np.array(list(rows), np.float64)
     report = []
     rng = np.random.default_rng(seed)
     picks = [("organism", s, e, x, y, tape) for s, e, x, y, tape in organisms(world, k)]
@@ -112,7 +121,7 @@ def evaluate(world, rows, k=10, sites=64, baseline=5, seed=0, log=print):
                       rng.integers(0, 256, world.soup.shape[1], dtype=np.uint8)))
     for kind, s, e, x, y, tape in picks:
         pl, soup = sandbox(world, x, y, tape, sites=sites, seed=seed)
-        res = live(pl, soup, rows)
+        res = live(soup, rows)
         row = {"kind": kind, "site": s, "energy_in_world": e, "place": x, "latitude": y,
                "band_s": int(world.planet.taus[y]), **summary(res), "drivers": drivers(res)}
         report.append(row)

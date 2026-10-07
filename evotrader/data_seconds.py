@@ -178,6 +178,12 @@ def save_day(path, rows):
 
 
 def iter_seconds(store="data/seconds", symbol="BTCUSDT", start_ms=None, end_ms=None):
+    for block in iter_second_blocks(store, symbol, start_ms, end_ms):
+        yield from block
+
+
+def iter_second_blocks(store="data/seconds", symbol="BTCUSDT", start_ms=None, end_ms=None):
+    """The stored seconds in order, a day (one array of rows) at a time."""
     for path in sorted(glob.glob(os.path.join(store, symbol, "????-??-??.npz"))):
         with np.load(path) as z:
             rows = z["bars"]
@@ -187,7 +193,8 @@ def iter_seconds(store="data/seconds", symbol="BTCUSDT", start_ms=None, end_ms=N
             keep &= t >= start_ms
         if end_ms is not None:
             keep &= t < end_ms
-        yield from rows[keep]
+        if keep.any():
+            yield rows[keep]
 
 
 def save_seconds(store, symbol, rows):

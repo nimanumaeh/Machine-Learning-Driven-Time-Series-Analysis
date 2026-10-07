@@ -101,11 +101,16 @@ class SyntheticMarket:
 
     def stream(self, n=None, chunk=86_400):
         """Yield rows one at a time, forever or n of them, generated a chunk at a time."""
+        for block in self.blocks(n, chunk):
+            yield from block
+
+    def blocks(self, n=None, chunk=86_400):
+        """Yield arrays of up to `chunk` rows, forever or n rows in all."""
         done = 0
         while n is None or done < n:
-            block = self.rows(chunk if n is None else min(chunk, n - done))
+            block = np.asarray(self.rows(chunk if n is None else min(chunk, n - done)))
             done += len(block)
-            yield from block
+            yield block
 
 
 def synthetic_rows(n, planted=True, seed=0, start_price=60000.0,

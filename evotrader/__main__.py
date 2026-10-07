@@ -28,7 +28,7 @@ from .brains import NetBrain
 from .config import Config
 from .life import Life
 from .planet import MINUTE_TAU, Planet
-from .soup import Soup
+from .soup import PHYSICS, Soup
 from .mind import RRBrain
 from .selfmade import SelfMadeBrain
 from .report import full_report
@@ -230,47 +230,64 @@ def cmd_soup(args):
         planet, soup = planet_run.load(ckpt)
         with open(meta_path) as f:
             meta = json.load(f)
+        if meta.get("physics", 1) != PHYSICS:
+            sys.exit(f"{args.run} was made under soup physics {meta.get('physics', 1)}; this code has "
+                     f"physics {PHYSICS}: run it with the code it was made with, or start a new world")
         if args.synthetic and meta["source"] == "synthetic":
             meta["days"] = args.synthetic
-            with open(meta_path, "w") as f:
-                json.dump(meta, f, indent=1)
-        print(f"resuming {args.run} at {_when(planet.t)} UTC")
+        if args.until and meta["source"] == "store":
+            meta["until"] = args.until                      # a world can be lived further
+        with open(meta_path, "w") as f:
+            json.dump(meta, f, indent=1)
+        print(f"resuming {args.run} at {_when(soup.t)} UTC")
     else:
         cfg = _config(args)
         step_s = 60 if args.minutes else 1
         planet = Planet(width=args.width, seed=args.seed,
                         taus=MINUTE_TAU if args.minutes else None, step_s=step_s)
         matter = np.load(args.matter) if args.matter else None
+        if matter is not None and matter.shape[0] != planet.X * args.per_place * planet.Y:
+            n = planet.X * args.per_place * planet.Y
+            matter = matter[np.arange(n) % len(matter)]      # tile (or cut) it to the planet
         soup = Soup(cfg, planet, per_place=args.per_place, seed=args.seed,
-                    interactions=args.interactions, noise=args.noise, matter=matter, floor=args.rain,
+                    interactions=args.interactions, noise=args.noise, matter=matter,
                     max_exposure=args.max_exposure, heat=args.heat, digestion=args.digestion,
                     quantum=args.bite)
         store = args.store if args.store != "data/seconds" or not args.minutes else "data/market"
-        meta = {"kind": "soup", "source": "synthetic" if args.synthetic else "store",
+        meta = {"kind": "soup", "physics": PHYSICS, "source": "synthetic" if args.synthetic else "store",
                 "resolution_s": step_s, "taus": planet.taus.tolist(),
                 "max_exposure": args.max_exposure, "heat": args.heat, "digestion": args.digestion,
                 "bite": args.bite,
                 "days": args.synthetic, "null": args.null, "market_seed": args.market_seed,
                 "store": store, "symbol": args.symbol, "from": args.start, "until": args.until,
                 "width": args.width, "per_place": args.per_place, "interactions": args.interactions,
-                "noise": args.noise, "matter": args.matter, "rain": args.rain, "seed": args.seed,
+                "noise": args.noise, "matter": args.matter, "seed": args.seed,
                 "config": cfg.to_dict(),
                 "regions": {k: v.astype(int).tolist() for k, v in planet.regions.items()}}
         os.makedirs(args.run, exist_ok=True)
         with open(meta_path, "w") as f:
             json.dump(meta, f, indent=1)
+    if args.device == "gpu":
+        from .gpu import device_name
+        soup.to_gpu(sync=args.sync)
+        print(f"on the GPU: {device_name()}")
     step_s = meta.get("resolution_s", 1)
     if meta["source"] == "synthetic":
         market = SyntheticMarket(planted=not meta["null"], seed=meta["market_seed"], step_s=step_s)
-        rows = market.stream(int(meta["days"] * 86_400 / step_s))
+        blocks = market.blocks(int(meta["days"] * 86_400 / step_s))
     elif step_s == 60:
-        rows = data.iter_rows(meta["store"], meta["symbol"], _ms(meta["from"]), _ms(meta["until"]))
+        blocks = data.iter_blocks(meta["store"], meta["symbol"], _ms(meta["from"]), _ms(meta["until"]))
     else:
-        rows = data_seconds.iter_seconds(meta["store"], meta["symbol"], _ms(meta["from"]),
-                                         _ms(meta["until"]))
+        blocks = data_seconds.iter_second_blocks(meta["store"], meta["symbol"], _ms(meta["from"]),
+                                                 _ms(meta["until"]))
     print(f"soup of {soup.S} sites x {soup.soup.shape[1]} bytes on a planet {planet.X} x {planet.Y}; "
-          f"{soup.E} interactions a second (Ctrl-C saves; --resume carries on)")
-    planet_run.run_planet(planet, soup, rows, args.run, census_every_s=args.census_every)
+          f"about {soup.E} interactions a tick at the start (Ctrl-C saves; --resume carries on)")
+    tic = time.time()
+    n, finished = planet_run.run_soup(soup, blocks, args.run, census_every_s=args.census_every,
+                                      max_wall_s=args.max_hours * 3600 if args.max_hours else None)
+    took = time.time() - tic
+    print(f"{n} ticks in {took:.0f}s ({1000 * took / max(n, 1):.3f} ms a tick); "
+          + ("the data ran out" if finished else "stopped early: --resume carries on"))
 
 
 def cmd_view(args):
@@ -394,7 +411,9 @@ def main(argv=None):
     p.add_argument("--market-seed", type=int, default=0)
     p.add_argument("--width", type=int, default=32, help="longitudes (latitudes are the 8 timescales)")
     p.add_argument("--per-place", type=int, default=16, help="sites of matter at each place")
-    p.add_argument("--interactions", type=int, default=1024, help="interactions per second")
+    p.add_argument("--interactions", type=int, default=1024,
+                   help="sites that wake each tick while every site holds its stake (Kleiber: more "
+                        "when richer, fewer when poorer)")
     p.add_argument("--noise", type=float, default=0.00024,
                    help="chance a byte flips, per epoch (as many interactions as sites)")
     p.add_argument("--matter", help="start from this matter (.npy of sites x bytes) instead of random")
@@ -408,10 +427,12 @@ def main(argv=None):
                    help="most energy (USDT) one T instruction moves")
     p.add_argument("--digestion", type=float, default=1.0,
                    help="share of energy taken from (or given to) another site that arrives")
-    p.add_argument("--rain", type=float, default=0.0,
-                   help="when the planet's energy falls below this share of the start, stakes fall "
-                        "on dead sites (money put in); 0, the default, means energy only comes from BTC")
     p.add_argument("--census-every", type=int, default=1800)
+    p.add_argument("--device", choices=("cpu", "gpu"), default="cpu",
+                   help="where the world runs (gpu: CUDA through numba; see docs/gpu.md)")
+    p.add_argument("--sync", choices=("grid", "launch"), default="grid",
+                   help="on the GPU: one cooperative launch per chunk (grid) or two launches a tick")
+    p.add_argument("--max-hours", type=float, help="stop (and save) after this much wall time")
     g = p.add_argument_group("environment (defaults in evotrader/config.py)")
     g.add_argument("--taker-fee", dest="taker_fee", type=float)
     g.add_argument("--half-spread", dest="half_spread", type=float)

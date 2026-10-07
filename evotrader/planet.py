@@ -17,6 +17,9 @@ Culture       observatories (an organism's perception made public in a place)
               and markers (traces of how life has gone there, and how crowded
               it is) are extra senses of a place, built and maintained by its
               inhabitants.
+
+Matter in the soup feels the same weather through weather.py, which reads each
+band's bars as percentiles, compiled for whole chunks of rows.
 """
 
 import numpy as np
@@ -90,15 +93,6 @@ class Planet:
         self.growth = np.zeros((self.X, Y))
         self.crowding = np.zeros((self.X, Y))
         self.t = 0.0
-        # generic transduction for matter that reads the weather (soup.py): each stream's
-        # level and its change, as the percentile of its own recent history (histogram
-        # equalization, as a fly's photoreceptors encode contrast: Laughlin 1981), one
-        # signed byte each: 0 is the median, -128..127 below to above, unknown reads 0
-        self.sense_window = 256
-        self.sense_bytes = np.zeros((Y, 2 * N_REC), np.uint8)
-        self.sense_hist = np.full((Y, 2, N_REC, self.sense_window), np.nan)
-        self.sense_prev = np.full((Y, N_REC), np.nan)
-        self.sense_n = np.zeros(Y, np.int64)
 
     # ----------------------------------------------------------------- time
     def step(self, row):
@@ -168,29 +162,10 @@ class Planet:
             self.water[y] = float(np.clip(self.vol_fast[y] / self.vol_slow[y], 0.5, 2.0))
         self.bar[y] = np.nan
         self.funding_sum[y] = self.funding_mark[y] = 0.0
-        self._transduce(y, rec[:N_REC])
         # what is built wears away and traces fade, in the band's own time
         self.obs_integrity[:, y] = np.maximum(self.obs_integrity[:, y] - self.obs_decay, 0.0)
         self.growth[:, y] *= 1.0 - 1.0 / self.marker_memory
         self._run_observatories(y)
-
-    def _transduce(self, y, level):
-        """How this tick of the weather feels: each stream's level and change, as a byte."""
-        change = level - self.sense_prev[y]
-        self.sense_prev[y] = level
-        x = np.stack([level, change])                             # (2, streams)
-        hist = self.sense_hist[y]
-        hist[:, :, self.sense_n[y] % self.sense_window] = x
-        self.sense_n[y] += 1
-        ok = np.isfinite(hist)
-        with np.errstate(invalid="ignore"):
-            below = ((hist < x[..., None]) & ok).sum(-1)
-            same = ((hist == x[..., None]) & ok).sum(-1)
-        n = ok.sum(-1)
-        pct = np.where(n > 0, (below + 0.5 * same) / np.maximum(n, 1), 0.5)
-        pct = np.where(np.isfinite(x) & (n >= 16), pct, 0.5)
-        signed = np.clip(np.round(255 * pct - 127.5), -128, 127).astype(np.int64)
-        self.sense_bytes[y] = (signed % 256).astype(np.uint8).reshape(-1)
 
     def capacity(self):
         """How many organisms each place (x, y) can hold now."""

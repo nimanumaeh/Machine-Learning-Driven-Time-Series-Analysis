@@ -352,6 +352,12 @@ def build_market(store="data/market", symbol="BTCUSDT", start="2017-08", client=
 
 def iter_rows(store="data/market", symbol="BTCUSDT", start_ms=None, end_ms=None):
     """Every stored minute in order, as numpy rows."""
+    for block in iter_blocks(store, symbol, start_ms, end_ms):
+        yield from block
+
+
+def iter_blocks(store="data/market", symbol="BTCUSDT", start_ms=None, end_ms=None):
+    """The stored minutes in order, a month (one array of rows) at a time."""
     for path in month_files(store, symbol):
         with np.load(path) as z:
             rows = z["bars"]
@@ -361,7 +367,8 @@ def iter_rows(store="data/market", symbol="BTCUSDT", start_ms=None, end_ms=None)
             keep &= t >= start_ms
         if end_ms is not None:
             keep &= t < end_ms
-        yield from rows[keep]
+        if keep.any():
+            yield rows[keep]
 
 
 def save_store(store, symbol, rows):
