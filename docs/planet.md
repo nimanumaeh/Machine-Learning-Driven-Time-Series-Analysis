@@ -182,9 +182,9 @@ Ctrl-C or a kill saves it first.
 - Which organs persist, where, and in which lineages. Which observatories survive.
 - How often organisms are conscious, and whether that rises in regime breaks and falls in mastery.
 - **Ablations:**
-  - higher-order mode off;
-  - observatories and markers off;
-  - shuffled-weather planets, where nothing should settle except by luck.
+  - higher-order mode off (`--no-higher-order`): habits and blind generate-and-test only;
+  - observatories and markers off (`--no-culture`);
+  - a null market (`--synthetic DAYS --null`), where nothing can be predicted and nothing should settle except by luck. On real data the equivalent is a planet whose days are shuffled.
 
 ## 9. Honest limits
 
