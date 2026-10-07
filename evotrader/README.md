@@ -14,7 +14,8 @@ money split into children. Nothing here touches a real account.
 | Data | `data.py` | one row per minute, 24 columns: perp trades and order flow, mark price, funding, premium, spot, open interest, crowd positioning (free Binance archives + REST) |
 | Body | `exchange.py` | one exact Binance-style BTCUSDT perpetual account per agent: isolated margin, liquidation by mark price, fees, spread, funding, lot size |
 | Perception | `aspects.py` | 186 causal aspects (stream x operator x scale) an agent can attend to |
-| Mind | `mind.py`, `body.py` | relevance-realizing agents: scarce attention, an online arena model, the affordance value of *their own* account, salience derived from it |
+| Mind (default) | `selfmade.py` | agents that build their own perception (feature programs over raw receptors, generate-and-test) and learn what each move is worth from their own counterfactual participation; salience over their own features |
+| Engineered mind | `mind.py`, `aspects.py`, `body.py` | baseline: relevance realization over our 186 engineered aspects with our Kelly theory of value |
 | Baseline mind | `brains.py` | small fixed neural nets shaped only by evolution |
 | Ecology | `world.py` | equity is life: death, reproduction by account splitting, carrying capacity, newcomers, a never-selected control group |
 
@@ -29,7 +30,8 @@ python -m evotrader live --run runs/live             # history first, then real 
 python -m evotrader report --run runs/history
 ```
 
-- `--brain net` runs the evolved-net baseline instead of the relevance-realizing agents.
+- `--brain self` (default) runs the self-made agents.
+- `--brain rr` runs the engineered relevance-realizing baseline, and `--brain net` the evolved-net baseline.
 - `--attention-mode random` or `fixed` runs the ablations.
 - `--taker-fee` and `--half-spread` set your own account's costs.
 
@@ -37,7 +39,7 @@ Offline, there are two ways to try the machinery on a synthetic market with a pl
 
 ```bash
 python -m evotrader synth --days 90 && python -m evotrader evolve --store data/synthetic --symbol SYNTH
-python experiments/relevance_check.py --world planted --attention salience
+python experiments/relevance_check.py --brain self --world planted
 ```
 
 In a Claude Code cloud environment, allow `data.binance.vision`,

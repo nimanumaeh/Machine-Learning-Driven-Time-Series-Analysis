@@ -27,6 +27,30 @@ The document is in three parts:
 
 ---
 
+## 0b. The line between what is given and what is made
+
+The first relevance-realizing agents (`mind.py`) chose among 186 aspects
+*we* defined: "flow", "basis", momentum, trend, at our scales. They valued
+positions with *our* theory of what matters (Kelly: drift, volatility,
+liquidation odds). What they found was partly recognition of our own
+definitions. `selfmade.py` draws the line where an organism's would be.
+
+| Given (physiology and world) | Made by the agent |
+|---|---|
+| Receptors: the raw data columns, each transduced generically (log of a positive quantity, the raw value of a rate), and clocks (day, week, the exchange's 8-hour cycle) | Its perceptual features: programs $z_\tau(\mathrm{op}_k(a-b))$ over receptors that it generates, mutates, keeps or drops |
+| A body: its exchange account (margin, liquidation, funding, the cost of moving) | What each of its nine possible exposures is worth in each perceived situation, learned from its own counterfactual participation |
+| Capacities: a feature budget (scarcity); generic operators (difference, smoothing, swing, adaptive normalization) and time constants; a linear learner; nine exposure levels as its motor repertoire | Which features matter to it (salience), measured on its own values, so perspective follows from its own participation |
+| The laws: salience is sensitivity of its own value; a scarce budget; death below half its reference equity; reproduction by splitting | Its lineage's habits: inherited features and values, mutated |
+
+**What is still imposed, and why.**
+- **The menu of generic operators and time constants, and the linear learner.** This is physiology: the equivalent of neurons having time constants. Evolution can be given control over it later.
+- **The transduction rule and the clocks.** These are receptors.
+- **The nine exposure levels.** This is a motor repertoire.
+
+None of these says anything about markets. The planted-effect test now
+requires the agents to *construct* the crowding detector from raw receptors.
+Nothing hands it to them.
+
 ## 1. Commitments
 
 | | Commitment | Why |
