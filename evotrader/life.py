@@ -136,7 +136,7 @@ class Life:
         self.fees_dead = self.funding_dead = 0.0              # paid by organisms now dead
         self.liq_dead = 0
         self.counts = {"born": 0, "seeded": 0, "died": 0, "displaced": 0, "migrated": 0,
-                       "built": 0, "episodes": 0, "organs_made": 0}
+                       "built": 0, "episodes": 0, "organs_made": 0, "breakdowns": 0}
         self._senses = None
         # moving is a slow affair in planetary time: a 1-second organism gets as many
         # chances to move per hour as a 10-minute one, not 600 times as many
@@ -305,16 +305,37 @@ class Life:
         lam = 1.0 - 1.0 / self.memory[idx]
         P, W = self.P[idx], self.W[idx]
         Pphi = (P @ phi[:, :, None])[:, :, 0]
-        k = Pphi / (lam + (phi * Pphi).sum(1))[:, None]
+        k = Pphi / (lam + np.maximum((phi * Pphi).sum(1), 0.0))[:, None]
         E = Y - (phi[:, None, :] @ W)[:, 0]
         W += k[:, :, None] * E[:, None, :]
         P -= k[:, :, None] * Pphi[:, None, :]
-        P /= lam[:, None, None]
+        P = 0.5 * (P + P.transpose(0, 2, 1))              # rounding must not unbalance it over
+        P /= lam[:, None, None]                           # hundreds of thousands of updates
         P *= np.minimum(1.0, 4.0 * D * 0.05 / np.maximum(np.trace(P, axis1=1, axis2=2), 1e-12))[:, None, None]
         self.P[idx], self.W[idx] = P, W
         rate = np.maximum(1.0 / (self.nupd[idx] + 2.0), 1.0 / 500)[:, None]
         self.s2[idx] += rate * (E * E - self.s2[idx])
         self.nupd[idx] += 1
+        broken = ~(np.isfinite(W).all((1, 2)) & np.isfinite(P).all((1, 2)) & np.isfinite(self.s2[idx]).all(1))
+        if broken.any():
+            self._recover(idx[broken])
+
+    def _recover(self, idx):
+        """A mind that broke down numerically starts its learning over; body and organs remain."""
+        self.counts["breakdowns"] = self.counts.get("breakdowns", 0) + len(idx)
+        self.W[idx] = 0.0
+        self.P[idx] = np.eye(D) * 0.05
+        self.s2[idx] = 1e-4
+        self.nupd[idx] = 0
+        self.q_len[idx] = 0
+        self.grip[idx] = self.turbulence[idx] = self.conflict[idx] = self.drift[idx] = 0.0
+        self.err_fast[idx] = self.err_slow[idx] = 1.0
+        self.explore[idx], self.resilience[idx] = 0.3, 0.5
+        self.salience[idx] = 1.0 / K
+        self.integrity[idx] = np.where(np.isfinite(self.integrity[idx]), self.integrity[idx], 1.0)
+        for arr in (self.a_E, self.a_Wq):
+            bad = idx[~np.isfinite(arr[idx]).reshape(len(idx), -1).all(1)]
+            arr[bad] = self.rng.normal(0, 0.1, (len(bad),) + arr.shape[1:])
 
     def _shrunk(self, idx):
         """Values believed only as far as the evidence goes: w max(0, 1 - Var(w) / w^2)."""
@@ -826,8 +847,9 @@ class Life:
         by_band = np.bincount(ys, minlength=pl.Y)
 
         def band_mean(v):
-            s = np.bincount(ys, weights=v, minlength=pl.Y)
-            return (s / np.maximum(by_band, 1)).round(4).tolist()
+            ok = np.isfinite(v)
+            s = np.bincount(ys[ok], weights=v[ok], minlength=pl.Y)
+            return (s / np.maximum(np.bincount(ys[ok], minlength=pl.Y), 1)).round(4).tolist()
 
         organs, lineages = [], []
         if len(live):

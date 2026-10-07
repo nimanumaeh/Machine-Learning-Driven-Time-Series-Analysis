@@ -221,9 +221,9 @@ def cmd_planet(args):
 
 def cmd_view(args):
     from .viewer import write_viewer
-    out = args.out or os.path.join(args.run, "planet.html")
+    out = args.out or os.path.join(args.run[0], "planet.html")
     n = write_viewer(args.run, out, max_frames=args.frames)
-    print(f"{n} census frames written to {out}")
+    print(f"{n} census frames per world written to {out}")
 
 
 def main(argv=None):
@@ -325,8 +325,9 @@ def main(argv=None):
     g.add_argument("--seed", type=int, default=0)
     p.set_defaults(fn=cmd_planet)
 
-    p = sub.add_parser("view", help="one HTML page to watch a planet run")
-    p.add_argument("--run", default="runs/planet")
+    p = sub.add_parser("view", help="one HTML page to watch planet runs")
+    p.add_argument("--run", nargs="+", default=["runs/planet"],
+                   help="one run, or several to compare side by side")
     p.add_argument("--out")
     p.add_argument("--frames", type=int, default=400, help="most census frames to include")
     p.set_defaults(fn=cmd_view)

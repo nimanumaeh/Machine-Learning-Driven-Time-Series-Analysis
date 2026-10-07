@@ -401,9 +401,11 @@ def test_planet_runs_resume_from_disk_and_render(tmp_path):
     html = out.read_text()
     assert html.startswith("<!doctype html>") and "<title>BTC Planet Census</title>" in html
     data = json.loads(html.split('type="application/json">')[1].split("</script>")[0].replace("<\\/", "</"))
-    assert len(data["frames"]) == 6 and set(data["regions"]) == set(REGIONS)
-    assert data["bands"] == ["1s", "5s", "30s", "2m", "10m", "1h", "6h", "1d"]
-    write_viewer(run, str(out), bare=True, max_frames=3)
+    world = data["runs"][0]
+    assert len(world["frames"]) == 6 and set(world["regions"]) == set(REGIONS)
+    assert world["bands"] == ["1s", "5s", "30s", "2m", "10m", "1h", "6h", "1d"]
+    assert world["label"] == "planted market"
+    assert write_viewer([run, run], str(out), bare=True, max_frames=3) == [3, 3]
     bare = out.read_text()
     assert bare.startswith("<title>") and "<body>" not in bare
 
@@ -433,3 +435,24 @@ def test_with_nothing_learned_nobody_trades_even_when_conscious(monkeypatch):
     assert life.counts["episodes"] > 0                     # minds still reorganize...
     assert life.acct.trades.sum() == 0                     # ...but nobody pays to move at random
     assert life.acct.fees.sum() == 0
+
+
+def test_a_mind_that_breaks_down_starts_learning_over():
+    pl, life = new_life(n=2)
+    live(pl, life, seconds(5))
+    i = int(np.nonzero(life.alive)[0][0])
+    life.W[i, 3, 2] = np.nan                              # a numerical breakdown
+    life.explore[i] = np.nan
+    phi = np.ones((1, life.W.shape[1]))
+    life._rls(np.array([i]), phi, np.zeros((1, life.W.shape[2])))
+    assert np.isfinite(life.W[i]).all() and np.isfinite(life.P[i]).all()
+    assert life.nupd[i] == 0 and life.explore[i] == 0.3 and life.counts["breakdowns"] == 1
+    P = life.P[i]
+    rng = np.random.default_rng(0)
+    life.memory[i] = 50.0                                 # strong forgetting, lopsided excitation
+    for _ in range(3000):
+        phi = np.zeros((1, life.W.shape[1]))
+        phi[0, :4] = rng.normal(size=4) * 3
+        life._rls(np.array([i]), phi, rng.normal(size=(1, life.W.shape[2])))
+    P = life.P[i]
+    assert np.allclose(P, P.T) and np.linalg.eigvalsh(P).min() > -1e-12
