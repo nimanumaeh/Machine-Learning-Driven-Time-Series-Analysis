@@ -49,6 +49,13 @@ def full_report(world, store=None, top=10):
     p(f"  random agents, same rules, no selection: {_ret(s['control_net_pnl'], s['control_injected'])}")
     p(f"  holding 1x BTC since the start:           {s['bnh_return'] * 100:+.1f}%")
     mind = s.get("mind") or {}
+    if mind.get("salience_by_receptor"):
+        p("")
+        g = mind.get("grip")
+        p(f"What the agents' own features attend to (grip {'n/a' if g is None else f'{g:+.3f}'}):")
+        p("  receptors: " + ", ".join(f"{k} {v:.0%}" for k, v in list(mind["salience_by_receptor"].items())[:8]))
+        for name, share in mind["top_programs"][:6]:
+            p(f"  {share:>4.0%}  {name}")
     if mind.get("salience_by_stream"):
         p("")
         r3 = lambda v: "n/a" if v is None else f"{v:+.3f}"

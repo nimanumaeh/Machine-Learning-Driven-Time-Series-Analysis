@@ -13,7 +13,7 @@ money split into children. Nothing here touches a real account.
 |---|---|---|
 | Data | `data.py` | one row per minute, 24 columns: perp trades and order flow, mark price, funding, premium, spot, open interest, crowd positioning (free Binance archives + REST) |
 | Body | `exchange.py` | one exact Binance-style BTCUSDT perpetual account per agent: isolated margin, liquidation by mark price, fees, spread, funding, lot size |
-| Perception | `aspects.py` | 186 causal aspects (stream x operator x scale) an agent can attend to |
+| Receptors | `selfmade.py` | the raw columns, transduced generically; self-made agents build their own features from them |
 | Mind (default) | `selfmade.py` | agents that build their own perception (feature programs over raw receptors, generate-and-test) and learn what each move is worth from their own counterfactual participation; salience over their own features |
 | Engineered mind | `mind.py`, `aspects.py`, `body.py` | baseline: relevance realization over our 186 engineered aspects with our Kelly theory of value |
 | Baseline mind | `brains.py` | small fixed neural nets shaped only by evolution |
