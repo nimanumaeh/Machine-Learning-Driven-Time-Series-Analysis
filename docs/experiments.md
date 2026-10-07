@@ -182,3 +182,76 @@ In the first version, a conscious episode also picked an exploratory move at ran
 3. **Over ten days, leverage decides who lives.** Selection rewarded lucky leverage, as it will on any short horizon. Selecting for skill needs time for luck to average out.
 
 **What would change the picture:** months of history instead of days, real data, and a higher-order mode that keeps what it has learned when it reorganizes. These are the next experiments. A year of 1-second data at this population is about two and a half days of one CPU core.
+
+## Results: the soup (life that is not designed, docs/soup.md)
+
+Reproduce with (physics 1 was the soup's law until October 2026, so these runs need the code of commit `379e150`):
+
+```bash
+python -m evotrader soup --minutes --from 2021-01-01 --until 2025-01-01 --interactions 512 --census-every 172800 --max-exposure 1 --run runs/soup-gentle
+python -m evotrader soup ... --max-exposure 1 --heat 0.0001 --digestion 0.8 --run runs/soup-landauer
+python -m evotrader soup ... --max-exposure 125 --heat 0.0001 --digestion 0.8 --run runs/soup-leverage
+# then, with the current code: freeze them, transplant, run forward
+git worktree add /tmp/soup-v1 379e150 && python -I experiments/soup_freeze.py /tmp/soup-v1 runs/soup-*
+python experiments/soup_transplants.py runs/soup-gentle runs/soup-landauer runs/soup-leverage
+python experiments/soup_forward.py runs/soup-landauer evolved && python experiments/soup_forward.py runs/soup-landauer random
+```
+
+- **World.** 4,096 sites of 64 random bytes each, on 32 longitudes and 8 latitudes (1 minute to 2 weeks), each with an exact BTCUSDT account of 1,000 USDT. Matter lived through every minute from 2021-01-01 to 2025-01-01, during which BTC rose 220%.
+- **Duration.** About 1 hour 45 minutes of one CPU core per world.
+- **Three suns.**
+  - **Gentle:** exposure up to 1×, no heat, lossless bites.
+  - **Landauer:** up to 1×, 0.0001 USDT per byte written, 80% digestion.
+  - **Leverage:** the same, at up to 125×.
+
+### Four years of evolution
+
+| World | Alive at the end | Net | Fees | Heat and digestion | Funding | Liquidations | Trading before costs |
+|---|---|---|---|---|---|---|---|
+| Gentle | 3,361 | −1,420,809 (−35%) | 1,411,775 | 0 | 31,964 | 18 | +22,930 |
+| Landauer | 1,958 | −3,383,698 (−83%) | 601,400 | 2,681,861 | 135,973 | 18 | +35,536 |
+| Leverage | 3 | −4,100,873 (−100%) | 1,361,028 | 372,642 | 176,568 | 13,582 | −2,190,635 |
+
+Holding BTC with the same 4.1 million would have made +9.0 million. "Trading before costs" is the net plus fees, funding, heat and digestion.
+
+What happened:
+- **At 1×, matter neither made nor lost money by trading.** Over four years it netted +0.6% to +0.9% before costs. Fees decided the gentle world. Heat decided the Landauer world.
+- **At 125× nothing survived but stillness.** 13,582 liquidations. The three sites still alive never hold a position.
+- **Heat turned the Landauer world quiet.** By early 2022 the share of bytes that are instructions rose from 7% to 98%. The most common matter became 64 `<` bytes: `<` only moves a head, so it writes nothing and pays no heat. Variants with a single `,` copy `<` into their neighbors. Matter that stops computing also stops changing its position. Sites that last held a long rode the bull market: long positions peaked at 85% of sites in 2022. Under Landauer's law the cheapest way to live was to stop thinking.
+- **Energy settled at the slow latitudes.** In the gentle world, the 2-week latitude held 500,000 and the 1-minute latitude 116,000.
+
+### Reading them back as strategies, on data they never saw
+
+The test period is every minute from 2025-01-01 to 2026-09-30, during which BTC fell 10.7%.
+
+**Transplants.** Each world's 10 richest organisms, and 5 random tapes from the same places, each as a colony of 64 copies with evolution off.
+- In all three worlds, the richest organisms do not trade. They returned 0.0% (a few lost to heat). They are rich because they never paid a fee.
+- The few transplants that did trade lost: −26% for one from the Landauer world, mostly to fees and heat.
+- Random tapes lost between 0% and 14%, mostly to fees.
+
+**The whole world as a fund.** Every site's matter, run forward with its final capital and evolution off, against the same world made of random matter:
+
+| World | Evolved matter | Random matter | Evolved, market part | Random, market part |
+|---|---|---|---|---|
+| Gentle | −0.8% | −1.5% | −0.16% | −0.51% |
+| Landauer | −4.4% | −5.4% | −0.07% | −0.36% |
+
+Evolved matter loses less only because it trades less: fees of 0.6% against 1.0%, and 0.2% against 0.9%. Its market part is about zero.
+
+**Verdict.** Four years of selection at minute resolution found no trading skill. They found stillness: do not trade where trading costs, and do not compute where computing costs. That is what the laws reward when no sequence of instructions has yet found an edge that pays for its own fees and heat.
+
+### Soup physics 2, and life seeded into the market
+
+Physics 2 (`docs/soup.md` §1, §8) runs the same world faster, on a CPU or a GPU. Two worlds ran with the Landauer settings over the same four years, each in about 19 minutes. The second was seeded with self-replicators born in matter alone (§6 of `docs/soup.md`): 512 copies among 3,584 random tapes.
+
+| World | Alive | Net | Fees | Heat and digestion |
+|---|---|---|---|---|
+| Random matter | 3,392 | −2,038,035 (−50%) | 1,220,509 | 689,685 |
+| Seeded with replicators | 3,252 | −1,973,057 (−48%) | 1,242,950 | 773,586 |
+
+- A poorer world slows down under physics 2, so it burned a quarter of the heat physics 1 did.
+- The replicators died out within weeks, as they do in small worlds with noise. Hosts boom, parasites that borrow their copy loop boom after them, and the crash leaves no refuge (`docs/soup.md` §6).
+
+**What would change the picture.**
+- **Size.** Bigger worlds hold refuges where hosts and parasites persist, and give selection far more variation to work with. That is what the GPU is for (`docs/gpu.md`).
+- **Time.** Many seeds and longer spans would let rare skilled sequences appear and be told apart from luck.
