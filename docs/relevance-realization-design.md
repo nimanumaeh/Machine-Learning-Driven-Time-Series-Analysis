@@ -75,10 +75,11 @@ In trading this is literal. Holding a position *is* taking part in the market's 
 
 **Small-move form** (used for fast inner computation; realized outcomes always use the exact $T$):
 
-$$\mathbb{E}[\Pi_h] \;\approx\; x(\mu_h - \phi_h) \;-\; \tfrac12 x^2\sigma_h^2 \;-\; c\,|x-\lambda| \;-\; \pi_h(L)\,\ell(x)$$
+$$\mathbb{E}[\Pi_h] \;\approx\; x(\mu_h + \tfrac12\sigma_h^2 - \phi_h) \;-\; \tfrac{\kappa}{2} x^2\sigma_h^2 \;-\; c\,|x-\lambda| \;-\; \pi_h(L)\,\ell(x)$$
 
 where:
-- $\mu_h$ and $\sigma_h$ are the drift and volatility of log price over $h$;
+- $\mu_h$ and $\sigma_h$ are the drift and volatility of log price over $h$, so $\mu_h + \tfrac12\sigma_h^2$ is the arithmetic drift: a plain 1x long earns exactly $\mu_h$;
+- $\kappa \ge 1$ is the agent's risk weight ($1$ is full Kelly);
 - $\phi_h$ is expected funding;
 - $c$ is the fee plus half-spread per unit of notional;
 - $\pi_h(L) \approx 2\Phi(-d_L/\sigma_h)$ is the chance of touching the liquidation price within $h$. This follows from the reflection principle. The log-distance $d_L$ depends only on leverage, because the margin is isolated;
@@ -131,14 +132,20 @@ These match Vervaeke's adverbial qualia, which he says relevance realization exp
 
 **Why this is emanation and not emergence.** $C_t$ is a function of the body's participation. By the envelope theorem, away from the constraints,
 
-$$\nabla_o V \;=\; x^*\,\nabla_o\mu_h \;-\; (x^*)^2\sigma_h^2\,\nabla_o\log\sigma_h \;-\; x^*\,\nabla_o\phi_h \;+\;(\text{liquidation terms in } L).$$
+$$\nabla_o V \;=\; x^*\,\nabla_o\mu_h \;+\; x^*\sigma_h^2(1-\kappa x^*)\,\nabla_o\log\sigma_h \;-\; x^*\,\nabla_o\phi_h \;+\;(\text{liquidation terms in } L).$$
 
 So the same market shows up differently depending on how one is in it:
 - A lightly participating agent sees drift-bearing aspects as figure: *opportunity*, which counts linearly in $x^*$.
 - A heavily participating agent sees volatility-bearing aspects as figure: *threat*, which counts quadratically.
 - A 50x agent close to liquidation sees almost nothing but the short-horizon tail.
 
-Averaging over $\rho_t$ lets a flat agent still find salient the aspects that could *open* an opportunity, even where its current gradient is zero.
+**As implemented: the world's own step size instead of an infinitesimal one.** $V$ has flat regions and corners: the no-trade band that costs create, and the corner where the best move is to step out. There the gradient is exactly zero, and a 50x agent that ought to leave would see nothing as salient. So the operator uses finite differences at the scale aspects actually move (they are in standard units, so the step is $\delta = 1$):
+
+$$\Delta_i V = \frac{V(o + \delta e_i) - V(o - \delta e_i)}{2\delta}, \qquad C_t = \mathbb{E}_{o\sim\rho_t}\big[\Delta V\,\Delta V^\top\big].$$
+
+Where $V$ is smooth this is the expected gradient outer product above. It is checked in `tests/` with two bodies in one market:
+- a flat 2x agent puts 99.7% of its salience on the drift aspect;
+- an agent holding 8x at 50x leverage puts more than half on the volatility aspect.
 
 No one designs what is salient. The **law** $b \mapsto C$ is fixed. The **content** comes from participation plus the learned arena model.
 
@@ -147,6 +154,10 @@ No one designs what is salient. The **law** $b \mapsto C$ is fixed. The **conten
 - The grammar is streams × timescales × operators: returns, volatility, z-score, range, slope, the basis between trade and mark price, funding, cross-correlations, time since an event, the agent's own drawdown, and so on. That is thousands of possible aspects.
 - Salience can only be computed for aspects that are attended. New candidates come from three places: exploration of the grammar, propositions (section 3.4), and culture.
 - This is the frame problem in miniature, and that is deliberate.
+
+**Two rules learned from building it.**
+- **Act only on evidence.** The arena model's weights are shrunk toward zero by their own uncertainty, $w_{\text{eff}} = w\,\max(0,\, 1 - \operatorname{Var}(w)/w^2)$. The shrunk weights are used for salience and for action. Without this, Kelly sizing turns estimation noise into leveraged positions: fees were 3.5 times higher in early tests.
+- **Calibrate volatility by outcome.** The log-volatility head gives the *shape* of volatility across states. Its *level* is rescaled by the ratio of realized to predicted squared errors. Uncorrected, short-horizon volatility was off by 2 to 4 times. This calibration is itself part of grip.
 
 ### 3.3 Procedural: scripts follow from perspective
 
@@ -335,9 +346,9 @@ Lifetime learning supplies the content. The ecology that already exists selects 
 
 Each step is tested before the next one starts.
 
-1. **Body model and affordance value.** Build $\Pi$ and $V$ (Kelly with fees, funding and liquidation), and check them against `exchange.py`.
-2. **Aspect grammar and the online arena model.** The grammar comes with an attention budget. The arena model $f_\theta$ predicts $\mu_h$ and $\sigma_h$, with uncertainty.
-3. **Perspective.** Compute $C_t$, frames and salience. Test the emanation property: different bodies in the same market must get different $C$.
+1. **Done: body model and affordance value** (`body.py`). Checked against exact expectations, Brownian first-passage and finite differences.
+2. **Done: aspect grammar and the online arena model** (`aspects.py`, `mind.py`). 186 aspects, an attention budget of 10, recursive least squares with forgetting for drift and log-volatility.
+3. **Done: perspective** (`mind.py`). $C_t$, frames and salience, and salience-driven attention. The emanation property is tested.
 4. **Scripts.** Expectations, online learning, and habit/deliberation arbitration.
 5. **Consciousness.** Internal milieu, ignition, interventions, the meta-bandit, insight annealing, and episodic memory.
 6. **Propositions.** Abstraction, credence, and use in the workspace.

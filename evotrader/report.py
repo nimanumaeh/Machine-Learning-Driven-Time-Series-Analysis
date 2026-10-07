@@ -48,6 +48,13 @@ def full_report(world, store=None, top=10):
     p(f"  of which fees paid {tot['fees']:.0f}, funding paid {tot['funding']:+.0f}")
     p(f"  random agents, same rules, no selection: {_ret(s['control_net_pnl'], s['control_injected'])}")
     p(f"  holding 1x BTC since the start:           {s['bnh_return'] * 100:+.1f}%")
+    mind = s.get("mind") or {}
+    if mind.get("salience_by_stream"):
+        p("")
+        p(f"What the population finds salient (grip {mind['grip'] if mind['grip'] is None else round(mind['grip'], 3)},"
+          f" learning progress {mind['learning_progress'] if mind['learning_progress'] is None else round(mind['learning_progress'], 3)}):")
+        p("  streams: " + ", ".join(f"{k} {v:.0%}" for k, v in list(mind["salience_by_stream"].items())[:8]))
+        p("  aspects: " + ", ".join(f"{n} {v:.0%}" for n, v in mind["top_aspects"][:6]))
     p(f"  median growth per day, agents alive >= 1 day: {_pct_day(s['mature_daily_log_growth'])}")
     p("")
     p("Leverage in the living population (median "
@@ -69,6 +76,9 @@ def full_report(world, store=None, top=10):
           f"  {r['leverage']:>3.0f}x  {r['margin_frac']:>6.2f}  {r['age_days']:>6.1f}"
           f"  {r['lifetime_growth']:>10.3f}  {_pct_day(r['daily_log_growth'])}"
           f"  {r['position_btc']:>+8.3f}  {r['trades']:>6}  {r['liquidations']:>3}  {r['children']:>4}")
+        attends = r["mind"].get("attends")
+        if attends:
+            p("         attends to " + ", ".join(f"{n} ({v:.0%})" for n, v in attends))
     wild = world.alive & ~world.control
     if wild.any():
         roots, counts = np.unique(world.root_id[wild], return_counts=True)

@@ -5,8 +5,8 @@ import time
 from .report import status_line
 
 
-def run(world, bars, store, checkpoint_every_s=300, log=print, max_bars=None):
-    """Step `world` through `bars` until exhausted, `max_bars`, or Ctrl-C.
+def run(world, rows, store, checkpoint_every_s=300, log=print, max_bars=None):
+    """Step `world` through minute `rows` until exhausted, `max_bars`, or Ctrl-C.
 
     A checkpoint is written every `checkpoint_every_s` wall-clock seconds and on
     exit, so a run can always be resumed. A status line is logged at every
@@ -15,10 +15,10 @@ def run(world, bars, store, checkpoint_every_s=300, log=print, max_bars=None):
     last_ckpt = time.time()
     n = 0
     try:
-        for bar in bars:
-            if bar[0] / 1000.0 + world.base_seconds <= world.t:
+        for row in rows:
+            if row[0] / 1000.0 + 60 <= world.t:
                 continue                       # already seen (resume / overlap)
-            world.step(*bar)
+            world.step(row)
             n += 1
             if world._last_snapshot_t == world.t:
                 log(status_line(world))

@@ -43,7 +43,7 @@ class Store:
                     " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (e["id"], e["parent"], e["root"], e["generation"], e["timeframe"],
                      int(e["control"]), e["kind"], e["t"], e["leverage"], e["margin_frac"],
-                     e["deadband"], e["sigma"], e["genome"]))
+                     e.get("deadband"), e.get("sigma"), e["genome"]))
             elif kind == "death":
                 self.db.execute(
                     "UPDATE agents SET died_t=?, cause=?, growth=?, trades=?, fees=?,"

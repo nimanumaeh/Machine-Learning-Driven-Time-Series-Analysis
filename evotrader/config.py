@@ -22,8 +22,27 @@ BTCUSDT_BRACKETS = (
     (500_000_000, 1, 0.50),
 )
 
-# Candle sizes (seconds) an agent's genome can choose to think in.
+# Cadences (seconds) an agent's genome can choose to decide at.
 ALL_TIMEFRAMES = (60, 180, 300, 600, 900, 1800, 3600)
+
+
+@dataclass
+class MindConfig:
+    """Relevance-realizing agents (mind.py)."""
+    attention: int = 10            # aspects an agent can attend to at once
+    frame_k: int = 3               # dimensions of its frame (figure)
+    grid: int = 41                 # exposures tried when maximizing the affordance value
+    recent: int = 32               # decisions that make up "the present" for perspective
+    relandscape_every: int = 16    # decisions between perspective updates
+    grace: int = 2                 # perspective updates a newly attended aspect is kept
+    ridge: float = 20.0            # prior strength of the arena model, in samples
+    horizon_mults: tuple = (1, 2, 4, 8)   # horizon = cadence x this
+    explore: tuple = (0.05, 0.5)   # chance of trying a new aspect per perspective update
+    kappa: tuple = (1.0, 4.0)      # risk weight: 1 = full Kelly, 2 = half Kelly, ...
+    memory: tuple = (300.0, 5000.0)       # arena-model memory in samples (forgetting)
+    attention_mode: str = "salience"      # salience | random | fixed  (ablations)
+    control_attention: str = "random"     # what the control group does
+    inherit_mind: bool = True      # children start from their parent's mind
 
 
 @dataclass
@@ -56,10 +75,12 @@ class Config:
 
     snapshot_every_s: int = 3600
     timeframes: tuple = field(default_factory=lambda: ALL_TIMEFRAMES)
+    mind: MindConfig = field(default_factory=MindConfig)
     seed: int = 0
 
     def to_dict(self):
         d = asdict(self)
         d["timeframes"] = list(self.timeframes)
         d["brackets"] = [list(b) for b in self.brackets]
+        d["mind"] = {k: list(v) if isinstance(v, tuple) else v for k, v in d["mind"].items()}
         return d
