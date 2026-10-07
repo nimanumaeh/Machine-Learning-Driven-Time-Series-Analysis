@@ -41,6 +41,7 @@ class MindConfig:
     kappa: tuple = (1.0, 4.0)      # risk weight: 1 = full Kelly, 2 = half Kelly, ...
     memory: tuple = (300.0, 5000.0)       # arena-model memory in samples (forgetting)
     attention_mode: str = "salience"      # salience | random | fixed  (ablations)
+    anticipate: bool = True        # choose new aspects by learned query-key attention
     control_attention: str = "random"     # what the control group does
     inherit_mind: bool = True      # children start from their parent's mind
 

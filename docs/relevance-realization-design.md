@@ -358,6 +358,40 @@ Each step is tested before the next one starts.
 
 ---
 
+## 10b. Borrowed math
+
+Nothing here needs new mathematics. Each piece is an established result,
+reinterpreted. The contribution is the arrangement: what is derived from
+what, and what each part is judged by.
+
+| Piece | Established math | Reinterpreted as |
+|---|---|---|
+| Body value $V$ | Kelly (1956), Itô's correction, reflection principle (first passage) | what the market offers *this* account |
+| Arena model | recursive least squares with forgetting; shrinkage toward zero (ridge, James–Stein) | what the attended aspects say about drift and volatility, believed only on evidence |
+| Perspective | active subspaces (Constantine 2015) / expected gradient outer product; envelope theorem | salience and frame, derived from participation |
+| Anticipation | query–key dot-product attention (Vaswani et al. 2017), token embeddings | query = the body, keys = aspect structure (stream + operator + scale), output = where to look next |
+| Scarce attention | top-k gating (mixture of experts), hard attention / glimpses (Mnih et al. 2014) | the attention budget |
+| Learnable vs noise | learning progress (Oudeyer & Kaplan 2007) | reducible versus irreducible surprise |
+| Opponent processing | two opposed first-order rates, $d^* = P_+/(P_+ + P_-)$ | the relevance-realization dials |
+| Ecology | evolution strategies with self-adaptive mutation | lineages |
+
+**Next steps, also borrowed:**
+
+| Piece | Established math | Reinterpreted as |
+|---|---|---|
+| Loss of grip | Bayesian online changepoint detection (Adams & MacKay 2007): the posterior over time since the last regime change | ignition: the moment the scripts stop working |
+| Learning about learning | IDBD (Sutton 1992): per-feature step sizes learned by meta-gradient, explicitly "learning feature relevance" | each aspect's learning rate and forgetting, tuned by experience |
+| Scripts | options (Sutton, Precup & Singh 1999); Recurrent Independent Mechanisms (Goyal et al. 2021): top-k modules activated by attention, the rest untouched | habits that run until they don't |
+| Workspace | shared global workspace (Goyal et al. 2022): specialists compete through attention for a limited-capacity workspace that is broadcast back | consciousness as limited-capacity broadcast |
+| Insight | simulated annealing; entropy-driven search | breaking and making frames |
+
+**Where transformer attention is deliberately *not* used:** the arena model.
+Minute-level BTC returns have a very low signal-to-noise ratio, and a
+sequence transformer would fit the noise. Recursive least squares with
+shrinkage is the right tool there. Attention earns its place where the
+problem is choosing among many items given a state: which aspect to look at,
+and which module gets the workspace.
+
 ## 11. Lookup table
 
 | Vervaeke | Formal object | Trading meaning |
@@ -387,5 +421,11 @@ Each step is tested before the next one starts.
 - Oudeyer & Kaplan (2007). What is intrinsic motivation? *Frontiers in Neurorobotics*.
 - Sutton, Precup & Singh (1999). Between MDPs and semi-MDPs (options). *Artificial Intelligence*.
 - Kelly (1956). A new interpretation of information rate. *Bell System Technical Journal*.
+- Vaswani et al. (2017). Attention is all you need. *NeurIPS*.
+- Mnih, Heess, Graves & Kavukcuoglu (2014). Recurrent models of visual attention. *NeurIPS*.
+- Sutton (1992). Adapting bias by gradient descent: an incremental version of delta-bar-delta. *AAAI*. [mlanthology](https://mlanthology.org/aaai/1992/sutton1992aaai-adapting)
+- Adams & MacKay (2007). Bayesian online changepoint detection. [arXiv:0710.3742](https://ar5iv.arxiv.org/html/0710.3742)
+- Goyal et al. (2021). Recurrent independent mechanisms. *ICLR*. [mlanthology](https://mlanthology.org/iclr/2021/goyal2021iclr-recurrent)
+- Goyal et al. (2022). Coordination among neural modules through a shared global workspace. *ICLR*. [arXiv:2103.01197](https://arxiv.org/abs/2103.01197)
 - Proclus. *Elements of Theology*, prop. 35.
 - Baars (1988), *A Cognitive Theory of Consciousness*; Dehaene, *Consciousness and the Brain* (2014).

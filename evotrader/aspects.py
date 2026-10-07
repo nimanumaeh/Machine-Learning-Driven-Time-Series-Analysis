@@ -44,6 +44,23 @@ N_ASPECTS = len(NAMES)
 STREAM_OF = np.array([n.split(".")[0] for n in NAMES])
 
 
+def _structure():
+    """Each aspect as (stream, operator, scale) indices: its 'token' description."""
+    streams = list(STREAMS) + ["time"]
+    ops = ["mom", "vol", "dev", "trend", "clock"]
+    scales = sorted(set(RET_SCALES) | set(VOL_SCALES) | set(LVL_SCALES)) + [0]
+    out = []
+    for n in NAMES:
+        s, op, sc = (n.split(".") + ["0"])[:3]
+        if s == "time":
+            op, sc = "clock", "0"
+        out.append((streams.index(s), ops.index(op), scales.index(int(sc))))
+    return np.array(out), (len(streams), len(ops), len(scales))
+
+
+STRUCTURE, STRUCTURE_SIZES = _structure()
+
+
 def _log(x):
     return np.log(x) if x > 0 else np.nan
 

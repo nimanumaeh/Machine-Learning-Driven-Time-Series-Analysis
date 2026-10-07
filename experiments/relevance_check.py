@@ -53,6 +53,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--world", choices=("planted", "null"), default="planted")
     ap.add_argument("--attention", choices=("salience", "random", "fixed"), default="salience")
+    ap.add_argument("--no-anticipation", action="store_true",
+                    help="pick new aspects uniformly even in salience mode")
     ap.add_argument("--days", type=int, default=120)
     ap.add_argument("--seed", type=int, default=11)
     ap.add_argument("--out")
@@ -62,6 +64,7 @@ def main():
     cfg = Config(capacity=60, min_population=40, n_control=8, min_per_niche=2,
                  timeframes=(60, 300, 900, 3600), seed=args.seed)
     cfg.mind.attention_mode = args.attention
+    cfg.mind.anticipate = not args.no_anticipation
     w = World(cfg, RRBrain(cfg))
     timeline, t0 = [], time.time()
     for k, row in enumerate(rows):

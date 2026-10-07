@@ -26,15 +26,66 @@ earned by evidence.
 
 import numpy as np
 
-from .aspects import AspectEngine, N_ASPECTS, NAMES, STREAM_OF
+from .aspects import AspectEngine, N_ASPECTS, NAMES, STREAM_OF, STRUCTURE, STRUCTURE_SIZES
 from .body import affordance
 from .data import C
 
 EIGHT_HOURS_S = 8 * 3600
+N_BODY = 8
 
 
 def _logpdf(y, mu, sd):
     return -0.5 * ((y - mu) / sd) ** 2 - np.log(sd) - 0.9189385332046727
+
+
+class Anticipation:
+    """Where to look next: transformer-style query-key attention over the grammar.
+
+    An agent can only measure the salience of aspects it already attends to,
+    so choosing a new one is the frame problem proper. The query is the
+    agent's body (exposure, leverage, horizon, risk weight, grip); each
+    aspect's key is the sum of embeddings of its stream, operator and scale
+    (like token embeddings), plus a small per-aspect residual. The score
+    q . k / sqrt(d) predicts the log-salience the agent would measure, and a
+    softmax over unattended aspects decides which one to try. It learns from
+    every salience any agent measures, so it is shared: a small culture of
+    what tends to matter to bodies like mine.
+    """
+
+    def __init__(self, rng, d=8, lr=0.03, decay=1e-4):
+        ns, no, nc = STRUCTURE_SIZES
+        self.d, self.lr, self.decay = d, lr, decay
+        self.Es = rng.normal(0, 0.1, (ns, d))
+        self.Eo = rng.normal(0, 0.1, (no, d))
+        self.Ec = rng.normal(0, 0.1, (nc, d))
+        self.Ea = np.zeros((N_ASPECTS, d))
+        self.Wq = rng.normal(0, 0.1, (N_BODY, d))
+        self.updates = 0
+
+    def keys(self, aspects=slice(None)):
+        st = STRUCTURE[aspects]
+        return self.Es[st[..., 0]] + self.Eo[st[..., 1]] + self.Ec[st[..., 2]] + self.Ea[aspects]
+
+    def scores(self, body, aspects):
+        """Predicted log-salience of `aspects` for each body: (n, len(aspects))."""
+        return (body @ self.Wq) @ self.keys(aspects).T / np.sqrt(self.d)
+
+    def learn(self, body, aspects, target):
+        k = self.keys(aspects)
+        q = body @ self.Wq
+        err = (q * k).sum(1) / np.sqrt(self.d) - target
+        g = err[:, None] / np.sqrt(self.d) / len(err)
+        gq = g * k                                    # dL/dq
+        gk = g * q                                    # dL/dk
+        st = STRUCTURE[aspects]
+        self.Wq -= self.lr * (body.T @ gq + self.decay * self.Wq)
+        for E, ix in ((self.Es, st[:, 0]), (self.Eo, st[:, 1]), (self.Ec, st[:, 2])):
+            E *= 1 - self.lr * self.decay
+            np.add.at(E, ix, -self.lr * gk)
+        self.Ea *= 1 - self.lr * 10 * self.decay      # identity must keep being earned
+        np.add.at(self.Ea, aspects, -self.lr * gk)
+        self.updates += 1
+        return float(np.mean(err * err))
 
 
 class RRBrain:
@@ -51,6 +102,7 @@ class RRBrain:
         Q = max(mc.horizon_mults) + 2
         self.Q, self.R = Q, mc.recent
         self.engine = AspectEngine()
+        self.anticipation = Anticipation(world.rng)
         self.att = np.zeros((S, B), np.int64)
         self.age = np.zeros((S, B), np.int64)          # perspective updates since attended
         self.missing = np.zeros((S, B), np.int64)      # decisions the aspect was unavailable
@@ -260,7 +312,21 @@ class RRBrain:
         _, vecs = np.linalg.eigh(Cm)
         self.frame[idx] = vecs[:, :, ::-1][:, :, :self.K]
         self.age[idx] += 1
+        seasoned = (self.age[idx] > self.mc.grace) & (tr[:, None] > 0)
+        if seasoned.any():
+            rows, slots = np.nonzero(seasoned)
+            target = np.log(B * self.salience[idx][rows, slots] + 0.05)
+            self.anticipation.learn(self.body_state(idx)[rows], self.att[idx][rows, slots], target)
         return Cm
+
+    def body_state(self, idx):
+        """The query for anticipation: the agent's participation, in comparable units."""
+        w = self.world
+        x = w.exposure(idx)
+        return np.stack([np.ones(len(idx)), np.tanh(x / 3), np.tanh(np.abs(x) / 3),
+                         np.log(w.lev[idx]) / 5, np.log(self._horizon(idx)) / 6,
+                         (self.kappa[idx] - 1) / 3, np.clip(self.grip_drift[idx], -1, 1),
+                         np.clip(self.grip_vol[idx], -1, 1)], axis=1)
 
     # ------------------------------------------------------------- attention
     def _candidates(self, i):
@@ -306,7 +372,14 @@ class RRBrain:
                 slot = eligible[np.argmin(self.salience[i, eligible])]
             else:
                 slot = rng.choice(eligible)
-            self._replace(i, slot, rng.choice(cand))
+            if mode == "salience" and mc.anticipate and self.anticipation.updates > 50:
+                z = self.anticipation.scores(self.body_state(np.array([i])), cand)[0]
+                p = np.exp(z - z.max())
+                p = 0.8 * p / p.sum() + 0.2 / len(cand)       # keep some pure exploration
+                new = rng.choice(cand, p=p)
+            else:
+                new = rng.choice(cand)
+            self._replace(i, slot, new)
 
     # --------------------------------------------------------------- genomes
     def _reset_mind(self, i):

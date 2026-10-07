@@ -310,6 +310,30 @@ def test_attention_drops_the_least_salient_aspect():
     assert b.w[i, :, 3].tolist() == [0.0, 0.0] and b.age[i, 3] == 0
 
 
+def test_anticipation_learns_what_matters_to_which_body():
+    """Query-key attention over the grammar: generalizes by structure, depends on the body."""
+    from evotrader.aspects import STREAM_OF
+    from evotrader.mind import Anticipation, N_BODY
+    rng = np.random.default_rng(0)
+    ant = Anticipation(rng)
+    flat = np.zeros(N_BODY)
+    flat[0] = 1.0
+    levered = flat.copy()
+    levered[2] = 1.0                                    # |exposure| high
+    vol = np.nonzero(STREAM_OF == "range")[0]
+    flow = np.nonzero(STREAM_OF == "flow")[0]
+    seen_vol, seen_flow = vol[::2], flow[::2]           # train on half of each stream
+    for _ in range(3000):
+        body = levered if rng.random() < 0.5 else flat
+        a = rng.choice(np.concatenate([seen_vol, seen_flow]), 8)
+        hot = np.isin(a, seen_vol) if body is levered else np.isin(a, seen_flow)
+        ant.learn(np.tile(body, (8, 1)), a, np.where(hot, 1.0, -1.0))
+    unseen_vol, unseen_flow = vol[1::2], flow[1::2]     # never trained on these
+    for body, hot, cold in ((levered, unseen_vol, unseen_flow), (flat, unseen_flow, unseen_vol)):
+        z = ant.scores(body[None], np.concatenate([hot, cold]))[0]
+        assert z[:len(hot)].mean() > z[len(hot):].mean() + 0.5
+
+
 # ----------------------------------------------------------------- aspects
 def test_aspects_never_look_ahead():
     rows = synthetic_rows(2500, seed=1)
