@@ -47,10 +47,25 @@ aspects are chosen by learned query–key attention instead of uniformly.
 0.26, below the 0.32 base rate. Returns were −30.2%, in line with the other
 modes.
 
-**This is promising but not established.**
-- Paired by seed, the gain over no anticipation is +4, +4 and +47 points. The mean is carried by one seed.
-- Run-to-run noise is large. The never-selected controls swing about ±15 points between runs of the *same* market, from random draws alone.
-- A batch of six more paired seeds (14–19) is running to settle it.
+**Nine paired seeds (11–19), salience mode with and without anticipation:**
+
+| Seed | With anticipation | Without | Difference |
+|---|---|---|---|
+| 11 | +25.7% | +21.6% | +4.1 |
+| 12 | −24.3% | −28.1% | +3.8 |
+| 13 | +29.1% | −17.5% | +46.6 |
+| 14 | −21.6% | −21.3% | −0.3 |
+| 15 | +1.0% | −5.0% | +6.1 |
+| 16 | −20.1% | −20.1% | 0.0 |
+| 17 | −25.6% | −24.0% | −1.6 |
+| 18 | −12.0% | −17.7% | +5.7 |
+| 19 | −0.4% | −5.7% | +5.3 |
+| **Mean** | **−5.4%** | **−13.1%** | **+7.7** (sd 14.9) |
+
+- **Results:** anticipation did better in 7 of 9 seeds, and was profitable in 3 of 9 against 1 of 9 without it.
+- **The mean is carried by one seed (13).** The median gain is about +4 points.
+- **Significance:** a one-sided sign test gives p ≈ 0.09, and a t-test on the differences gives t ≈ 1.6.
+- **Verdict:** it probably helps a little, but this is not established. Run-to-run noise is large: never-selected controls swing about ±15 points between runs of the same market, from random draws alone.
 
 **Grip, split.** In both worlds the median agent's grip on *direction* is about
 zero (−0.005). Its grip on *volatility* is positive (+0.07 planted, +0.17 null).
