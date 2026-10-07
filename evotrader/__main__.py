@@ -290,8 +290,9 @@ def main(argv=None):
     p.add_argument("--minute-store", default="data/market",
                    help="minute store that supplies the slow streams (download it first)")
     p.add_argument("--from", dest="start", default="2019-09-08")
-    p.add_argument("--until")
-    p.add_argument("--cache", default="data/raw")
+    p.add_argument("--until", help="stop before this day")
+    p.add_argument("--cache", default=None,
+                   help="keep the raw trade archives here (about 10 MB a day); by default they are not kept")
     p.set_defaults(fn=cmd_seconds)
 
     p = sub.add_parser("planet", help="let very many organisms live on a planet of 1-second data")
