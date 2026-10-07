@@ -74,3 +74,36 @@ agent's log-score. The profits come from a minority of agents and from sizing up
 when the signal is strong. This matters for the next step: loss of grip on
 direction is not yet a usable trigger for "my scripts stopped working". A
 changepoint detector on the agent's own outcomes is the better-founded signal.
+
+## Results: self-made agents (no engineered features, no theory of value)
+
+These agents (`selfmade.py`) are given only:
+- raw receptors;
+- their account's physics;
+- generic capacities.
+
+To find the planted effect they must *construct* a crowding detector, for example a long-normalized level of the premium or of the positioning ratios, or the perp–spot basis, out of raw receptors. Base rate: 23% of random programs read a crowding receptor or the basis.
+
+| World / seed | Return | Controls | Crowd salience, first → last 30 days | Most salient self-built programs |
+|---|---|---|---|---|
+| planted 11 | −11.3% | +13.7% | 0.23 → 0.31 | `z1024(smooth16(close - spot))` (the basis), `z1024(smooth64(top_position_ls))`, also `z4096(week_cos)` |
+| planted 12 | −24.1% | −43.3% | 0.20 → 0.34 (0.42 on the last day) | `z16384(smooth4(premium))` with 30% of the population's salience |
+| planted 13 | −16.9% | −37.7% | 0.20 → 0.23 | nothing relevant stood out |
+| null 11 | −35.0% | −36.1% | 0.22 → 0.17 | nothing; salience on crowding programs fell below the base rate |
+
+**What this shows:**
+
+1. **Genuine discovery happens, sometimes.**
+   - In two of three planted seeds, the population built the relevant perceptions itself and concentrated salience on them. In seed 12 it built an ~11-day premium-level detector from the raw premium.
+   - In the null world it built nothing of the kind.
+   - None of these perceptions was given. They were composed, kept and inherited because they mattered to the agents' own values.
+2. **Being told is worth something.**
+   - Over the same 120 days, the engineered agents (our features and our Kelly theory) lost less: −5% to −8% on average.
+   - The self-made agents lost −17%, against −22% for their controls, and did not convert discovery into profit within 120 days.
+   - Constructing perception from scratch costs time, and the planted effect is faint.
+3. **Directional grip of the self-made agents stays slightly negative** (about −0.01 to −0.08). Their learned values do not yet predict outcomes better than "nothing happens". That is expected at this signal-to-noise ratio, and it is what more history (five years of full data) and evolution of the physiology should be tested against.
+
+**Next:**
+- Longer runs: real history once it is reachable.
+- More seeds.
+- Letting evolution shape the perceptual physiology (operators and time constants).
