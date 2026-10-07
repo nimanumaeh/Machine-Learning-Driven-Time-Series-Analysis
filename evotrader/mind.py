@@ -1,4 +1,8 @@
-"""RRBrain: relevance-realizing agents (steps 1-3 of docs/relevance-realization-design.md).
+"""RRBrain: relevance realization over *our* engineered aspects (a baseline now).
+
+Its perception (aspects.py) and its theory of value (body.py: Kelly with
+drift, volatility and liquidation) are designed by us; the agents only choose
+among our definitions. selfmade.py removes both. Kept as the comparison.
 
 Each agent attends to a few aspects of the market (scarcity), learns online
 what they say about the drift and the volatility of its horizon (the arena

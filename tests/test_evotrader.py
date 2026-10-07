@@ -520,3 +520,155 @@ def test_features_finite_and_bounded():
         book.add(k * MINUTE, MINUTE, p, p * 1.01, p * 0.99, p, rng.random() + 0.1)
     f = book.features()
     assert f.shape == (N_FEATURES,) and np.all(np.isfinite(f)) and np.all(np.abs(f) <= 2)
+
+
+# --------------------------------------------------------------- self-made
+from evotrader.selfmade import (ACTIONS, N_REC, RECEPTORS, ZERO, SelfMadeBrain, TokenAttention,
+                                describe_program)
+
+
+def self_world(**kw):
+    c = cfg(**kw)
+    return World(c, SelfMadeBrain(c))
+
+
+def test_receptors_are_raw_columns_transduced_generically():
+    w = self_world()
+    r = synthetic_rows(1, seed=0)[0]
+    rec = w.brain._receive(r)
+    assert rec[RECEPTORS.index("close")] == pytest.approx(np.log(r[C["close"]]))
+    assert rec[RECEPTORS.index("volume")] == pytest.approx(np.log1p(r[C["volume"]]))
+    assert rec[RECEPTORS.index("premium")] == r[C["premium"]]          # rates stay raw
+    assert rec[ZERO] == 0.0
+    r2 = r.copy()
+    r2[C["open_interest"]] = np.nan
+    assert np.isnan(w.brain._receive(r2)[RECEPTORS.index("open_interest")])
+
+
+def test_programs_never_look_ahead_and_compute_what_they_say():
+    rows = synthetic_rows(400, seed=3)
+    a, b = self_world(), self_world()
+    for w in (a, b):
+        w.brain.prog[0, 0] = (RECEPTORS.index("close"), ZERO, 1, 1, 0)   # z64(change4(close))
+    altered = rows.copy()
+    altered[300:, 1:9] *= 1.3
+    for r in rows[:300]:
+        a.brain.observe(r, 0)
+    for r in altered[:300]:
+        b.brain.observe(r, 0)
+    assert np.allclose(np.nan_to_num(a.brain.value), np.nan_to_num(b.brain.value))
+    closes = np.log(rows[:300, C["close"]])
+    x = closes[4:] - closes[:-4]
+    m, v = x[0], 0.0
+    for val in x[1:]:
+        d = val - m
+        m, v = m + d / 64, (1 - 1 / 64) * (v + d * d / 64)
+    assert a.brain.value[0, 0] == pytest.approx(np.clip((x[-1] - m) / np.sqrt(v + 1e-18), -5, 5))
+    assert describe_program(a.brain.prog[0, 0]) == "z64(change4(close))"
+
+
+def test_counterfactual_outcomes_match_the_exchange():
+    """What the agent learns from is exactly what its account would have done."""
+    c = cfg(taker_fee=0.0, half_spread=0.0, min_notional=0.0, qty_step=1e-9)
+    w = World(c, SelfMadeBrain(c))
+    b = w.brain
+    p0, lev, xmax = 60000.0, 10.0, 8.0
+    path = [(60300.0, 59900.0, 60400.0, 60350.0, 0.0), (60100.0, 60000.0, 60500.0, 60200.0, 0.0001),
+            (60600.0, 60050.0, 60700.0, 60650.0, 0.0)]
+    b.n = 10
+    for k, step in enumerate(path):
+        b.path[(b.n + k) % 2048] = step
+    b.n += len(path)
+    b.q_val[0, 0, :4] = (9, p0, xmax, lev)
+    y = b._outcomes(0, 0)
+    for k, u in enumerate(ACTIONS):
+        acct = Accounts(1, c)
+        acct.open(0, 1000.0)
+        acct.execute(np.array([0]), np.array([u * xmax * 1000.0 / p0]), p0, np.array([lev]))
+        for close, low, high, mark, fund in path:
+            acct.liquidate(high, low)
+            if fund:
+                acct.settle_funding(fund, mark)
+        assert y[k] == pytest.approx(np.log(acct.equity(path[-1][0])[0] / 1000.0), abs=2e-5)
+    crash = [(55000.0, 54000.0, 60000.0, 55000.0, 0.0)]          # through a 10x long's liquidation
+    b.path[b.n % 2048] = crash[0]
+    b.n += 1
+    b.q_val[0, 0, :4] = (12, 60600.0, xmax, lev)
+    y = b._outcomes(0, 0)
+    assert y[-1] == pytest.approx(np.log(1 - xmax / lev))       # the whole margin is gone
+    assert y[0] > 0                                             # the full short gained
+
+
+def test_self_made_agents_learn_what_their_own_moves_are_worth():
+    w = self_world()
+    b = w.brain
+    rng = np.random.default_rng(5)
+    b.memory[0] = 5000.0
+    b.P[0] = np.eye(b.D) * b.P0
+    for _ in range(3000):
+        v = rng.normal(size=b.B)
+        phi = b._phi(v[None])
+        edge = 0.002 * v[3]                                     # feature 3 tells direction
+        Y = (ACTIONS * 2.0 * edge + 0.005 * rng.normal())[None]
+        b._rls(np.array([0]), phi, Y)
+    W = b._shrunk(np.array([0]))[0]
+    assert W[3, -1] > 0.002 and W[3, 0] < -0.002                # long likes it, short dislikes it
+    assert np.abs(W[[0, 1, 2], :]).max() < 5e-4                 # the rest is noise, shrunk away
+
+
+def test_self_made_perspective_follows_participation():
+    w = self_world()
+    for r in synthetic_rows(1500, seed=2):
+        w.step(r)
+    b = w.brain
+    i, j = np.nonzero(w.alive & ~w.control)[0][:2]
+    up, down = ACTIONS > 0, ACTIONS < 0
+    for k in (i, j):
+        b.W[k] = 0.0
+        b.W[k, 0, down] = -0.003 * ACTIONS[down]                   # feature 0: a short opening
+        b.W[k, 1, up] = 0.003 * ACTIONS[up]                        # feature 1: what longs live on
+        b.W[k, -1, up] = -0.003 * ACTIONS[up]                      # longs usually not worth opening
+        b.P[k] = np.eye(b.D) * 1e-9
+        b.s2[k] = 1e-6
+        b.recent[k] = np.random.default_rng(0).normal(size=(b.R, b.B))
+        b.recent_n[k] = b.R
+        w.lev[k], w.frac[k] = 10.0, 0.5
+        w.acct.open(k, 1000.0)
+    w.acct.execute(np.array([j]), np.array([5 * 1000.0 / w.mark]), w.mark, np.array([10.0]))
+    b.perspective(np.array([i, j]))
+    flat, held = b.salience[i], b.salience[j]
+    assert flat[0] > 2 * flat[1]                # flat: the opening that is within reach
+    assert held[1] > 2 * held[0]                # holding a long: what the long lives on
+
+
+def test_generate_and_test_drops_the_least_salient_program():
+    w = self_world()
+    for r in synthetic_rows(600, seed=4):
+        w.step(r)
+    b = w.brain
+    i = int(np.nonzero(w.alive & ~w.control)[0][0])
+    b.explore[i] = 1.0
+    b.age[i] = 10
+    b.salience[i] = np.linspace(1, 2, b.B)
+    b.salience[i, 2] = 0.0
+    before = b.prog[i].copy()
+    b._attend(np.array([i]))
+    changed = np.nonzero((b.prog[i] != before).any(1))[0]
+    assert list(changed) == [2]
+    assert b.p_cnt[i, 2] == 0 and (b.W[i, 2] == 0).all()
+    assert len({tuple(p) for p in b.prog[i]}) == b.B           # no duplicate organs
+
+
+def test_self_made_world_runs_and_checkpoints():
+    rows = synthetic_rows(2500, seed=6)
+    a = self_world()
+    for r in rows[:1500]:
+        a.step(r)
+    b = pickle.loads(pickle.dumps(a))
+    for r in rows[1500:]:
+        a.step(r)
+        b.step(r)
+    assert np.array_equal(a.equity(), b.equity())
+    assert np.all(np.isfinite(a.equity()[a.alive]))
+    s = a.snapshot()["mind"]
+    assert s["top_programs"] and 0 < sum(s["salience_by_receptor"].values()) <= 1 + 1e-9

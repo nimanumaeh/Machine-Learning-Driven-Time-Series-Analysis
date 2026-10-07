@@ -22,13 +22,14 @@ from . import data
 from .brains import NetBrain
 from .config import Config
 from .mind import RRBrain
+from .selfmade import SelfMadeBrain
 from .report import full_report
 from .runner import run
 from .store import Store, load_world
 from .synthetic import synthetic_rows
 from .world import World
 
-BRAINS = {"rr": RRBrain, "net": NetBrain}
+BRAINS = {"self": SelfMadeBrain, "rr": RRBrain, "net": NetBrain}
 
 
 def _ms(day):
@@ -55,8 +56,10 @@ def _config(args):
 
 def _add_config_args(p):
     g = p.add_argument_group("environment (defaults in evotrader/config.py)")
-    g.add_argument("--brain", choices=sorted(BRAINS), default="rr",
-                   help="rr = relevance-realizing agents, net = evolved fixed nets")
+    g.add_argument("--brain", choices=sorted(BRAINS), default="self",
+                   help="self = agents that build their own perception and values; "
+                        "rr = relevance realization over our engineered aspects; "
+                        "net = evolved fixed nets")
     g.add_argument("--attention-mode", choices=("salience", "random", "fixed"),
                    help="rr ablation: how attention is reallocated")
     g.add_argument("--taker-fee", dest="taker_fee", type=float,
