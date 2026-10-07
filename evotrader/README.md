@@ -6,6 +6,7 @@ money split into children. Nothing here touches a real account.
 
 - `docs/data.md`: what the arena is made of: the exact data streams, which years, and how rows become a world.
 - `docs/relevance-realization-design.md`: the theory and the math of the relevance-realizing agents.
+- `docs/planet.md`: the planet made of 1-second BTC data, and the smallest Vervaekean organisms that live on it.
 
 ## Layers
 
@@ -18,6 +19,10 @@ money split into children. Nothing here touches a real account.
 | Engineered mind | `mind.py`, `aspects.py`, `body.py` | baseline: relevance realization over our 186 engineered aspects with our Kelly theory of value |
 | Baseline mind | `brains.py` | small fixed neural nets shaped only by evolution |
 | Ecology | `world.py` | equity is life: death, reproduction by account splitting, carrying capacity, newcomers, a never-selected control group |
+| 1-second data | `data_seconds.py` | one row per second rebuilt from every perpetual trade (aggTrades), slow streams joined causally from the minute store |
+| Planet | `planet.py` | a world made of the market: latitude is timescale (1 second at the equator to 1 day at the pole), longitude decides which senses exist; observatories and markers are built by its inhabitants |
+| Life | `life.py` | very many minimal organisms as array columns: an exact account as body, self-made organs kept alive by salience, two opponent dials, a learned gate into a higher-order mode that rebuilds organs, migrates and builds |
+| Watching | `planet_run.py`, `viewer.py` | censuses of life over time, checkpoints, and one self-contained HTML page per run |
 
 ## Use
 
@@ -34,6 +39,19 @@ python -m evotrader report --run runs/history
 - `--brain rr` runs the engineered relevance-realizing baseline, and `--brain net` the evolved-net baseline.
 - `--attention-mode random` or `fixed` runs the ablations.
 - `--taker-fee` and `--half-spread` set your own account's costs.
+
+The planet runs on the 1-second store, or on a synthetic market:
+
+```bash
+python -m evotrader seconds --from 2024-01-01              # every trade -> 1-second rows (after `download`)
+python -m evotrader planet --from 2024-01-01 --run runs/planet
+python -m evotrader planet --synthetic 10 --run runs/planet-synth          # or --null for nothing planted
+python -m evotrader planet --run runs/planet --resume      # Ctrl-C saves; this carries on
+python -m evotrader view --run runs/planet                 # runs/planet/planet.html
+```
+
+- `--width` sets the number of longitudes; the 8 latitudes are the timescales.
+- `--population` is the floor below which newcomers arrive, and `--place-capacity` how many organisms a place holds at normal liquidity.
 
 Offline, there are two ways to try the machinery on a synthetic market with a planted effect (or with `--null`, without one):
 

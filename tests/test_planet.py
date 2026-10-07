@@ -376,3 +376,33 @@ def test_life_on_the_planet_runs_and_resumes_exactly():
     assert sum(c["by_band"]) == c["population"] == np.sum(c["density"])
     assert c["net"] == pytest.approx(float(life.equity()[life.alive].sum()) + life.withdrawn
                                      - life.injected)
+
+
+# ----------------------------------------------------------- runs and viewer
+def test_planet_runs_resume_from_disk_and_render(tmp_path):
+    from evotrader import planet_run
+    from evotrader.viewer import write_viewer
+    import json
+    run = str(tmp_path / "run")
+    rows = seconds(1800, seed=4)
+    pl, life = new_life(n=30)
+    (tmp_path / "run").mkdir()
+    (tmp_path / "run" / "meta.json").write_text(json.dumps({"source": "synthetic", "days": 1, "null": False,
+                                                            "market_seed": 4, "width": 6, "place_capacity": 16}))
+    planet_run.run_planet(pl, life, rows[:900], run, census_every_s=300, log=lambda *a: None)
+    pl2, life2 = planet_run.load(str(tmp_path / "run" / "planet.pkl"))
+    planet_run.run_planet(pl2, life2, rows, run, census_every_s=300, log=lambda *a: None)  # seen rows skipped
+    live(pl, life, rows[900:])
+    assert np.array_equal(life.equity(), life2.equity())
+    frames = planet_run.read_census(run)
+    assert [f["t"] for f in frames] == sorted({f["t"] for f in frames}) and len(frames) == 6
+    out = tmp_path / "view.html"
+    assert write_viewer(run, str(out)) == 6
+    html = out.read_text()
+    assert html.startswith("<!doctype html>") and "<title>BTC Planet Census</title>" in html
+    data = json.loads(html.split('type="application/json">')[1].split("</script>")[0].replace("<\\/", "</"))
+    assert len(data["frames"]) == 6 and set(data["regions"]) == set(REGIONS)
+    assert data["bands"] == ["1s", "5s", "30s", "2m", "10m", "1h", "6h", "1d"]
+    write_viewer(run, str(out), bare=True, max_frames=3)
+    bare = out.read_text()
+    assert bare.startswith("<title>") and "<body>" not in bare

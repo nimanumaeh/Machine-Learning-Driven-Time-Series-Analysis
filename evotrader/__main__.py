@@ -7,26 +7,32 @@
   evolve     let a population live through stored history
   live       carry a run on in real time, forever (history first, then live)
   report     summarise a run
+  seconds    build/update the 1-second store from every perpetual trade
+  planet     drop very many organisms onto a planet made of 1-second data
+  view       turn a planet run's census into one self-contained HTML page
 """
 
 import argparse
 import datetime as dt
 import itertools
+import json
 import os
 import sys
 import time
 
 import numpy as np
 
-from . import data
+from . import data, data_seconds, planet_run
 from .brains import NetBrain
 from .config import Config
+from .life import Life
+from .planet import Planet
 from .mind import RRBrain
 from .selfmade import SelfMadeBrain
 from .report import full_report
 from .runner import run
 from .store import Store, load_world
-from .synthetic import synthetic_rows
+from .synthetic import SyntheticMarket, synthetic_rows
 from .world import World
 
 BRAINS = {"self": SelfMadeBrain, "rr": RRBrain, "net": NetBrain}
@@ -165,6 +171,59 @@ def cmd_report(args):
     store.close()
 
 
+def cmd_seconds(args):
+    n = data_seconds.build_seconds(args.store, args.minute_store, args.symbol, args.start,
+                                   args.until, cache_dir=args.cache)
+    print(f"{n} seconds written to {args.store}/{args.symbol}")
+
+
+def cmd_planet(args):
+    ckpt = os.path.join(args.run, "planet.pkl")
+    meta_path = os.path.join(args.run, "meta.json")
+    if os.path.exists(ckpt):
+        if not args.resume:
+            sys.exit(f"{args.run} already holds a world: add --resume, or choose another --run")
+        planet, life = planet_run.load(ckpt)
+        with open(meta_path) as f:
+            meta = json.load(f)
+        if args.synthetic and meta["source"] == "synthetic":
+            meta["days"] = args.synthetic                  # carry a synthetic world on further
+            with open(meta_path, "w") as f:
+                json.dump(meta, f, indent=1)
+        print(f"resuming {args.run} at {_when(planet.t)} UTC: {int(life.alive.sum())} organisms")
+    else:
+        cfg = _config(args)
+        planet = Planet(width=args.width, seed=args.seed, base_capacity=args.place_capacity)
+        life = Life(cfg, planet, capacity=args.organisms, seed=args.seed,
+                    min_population=args.population)
+        meta = {"source": "synthetic" if args.synthetic else "seconds", "days": args.synthetic,
+                "null": args.null, "market_seed": args.market_seed, "store": args.store,
+                "symbol": args.symbol, "from": args.start, "until": args.until,
+                "width": args.width, "place_capacity": args.place_capacity,
+                "organisms": args.organisms, "population": args.population, "seed": args.seed,
+                "config": cfg.to_dict(),
+                "regions": {k: v.astype(int).tolist() for k, v in planet.regions.items()}}
+        os.makedirs(args.run, exist_ok=True)
+        with open(meta_path, "w") as f:
+            json.dump(meta, f, indent=1)
+    if meta["source"] == "synthetic":
+        market = SyntheticMarket(planted=not meta["null"], seed=meta["market_seed"], step_s=1)
+        rows = market.stream(int(meta["days"] * 86_400))
+    else:
+        rows = data_seconds.iter_seconds(meta["store"], meta["symbol"], _ms(meta["from"]),
+                                         _ms(meta["until"]))
+    print(f"planet {planet.X} x {planet.Y}, up to {life.N} organisms; census every "
+          f"{args.census_every} s (Ctrl-C saves; --resume carries on)")
+    planet_run.run_planet(planet, life, rows, args.run, census_every_s=args.census_every)
+
+
+def cmd_view(args):
+    from .viewer import write_viewer
+    out = args.out or os.path.join(args.run, "planet.html")
+    n = write_viewer(args.run, out, max_frames=args.frames)
+    print(f"{n} census frames written to {out}")
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="evotrader", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -224,7 +283,51 @@ def main(argv=None):
     p.add_argument("--top", type=int, default=10)
     p.set_defaults(fn=cmd_report)
 
+    p = sub.add_parser("seconds", help="build/update the 1-second store from every trade")
+    store_args(p, default_store="data/seconds")
+    p.add_argument("--minute-store", default="data/market",
+                   help="minute store that supplies the slow streams (download it first)")
+    p.add_argument("--from", dest="start", default="2019-09-08")
+    p.add_argument("--until")
+    p.add_argument("--cache", default="data/raw")
+    p.set_defaults(fn=cmd_seconds)
+
+    p = sub.add_parser("planet", help="let very many organisms live on a planet of 1-second data")
+    store_args(p, default_store="data/seconds")
+    p.add_argument("--run", default="runs/planet")
+    p.add_argument("--resume", action="store_true")
+    p.add_argument("--from", dest="start", help="first day of the 1-second store to live through")
+    p.add_argument("--until", help="stop before this day")
+    p.add_argument("--synthetic", type=float, metavar="DAYS",
+                   help="live on a synthetic market for DAYS days instead of the store")
+    p.add_argument("--null", action="store_true", help="synthetic market with nothing planted")
+    p.add_argument("--market-seed", type=int, default=0)
+    p.add_argument("--width", type=int, default=32, help="longitudes (latitudes are the 8 timescales)")
+    p.add_argument("--place-capacity", type=int, default=12,
+                   help="organisms a place holds at normal water (liquidity)")
+    p.add_argument("--population", type=int, default=1000,
+                   help="below this, newcomers arrive from space (panspermia)")
+    p.add_argument("--organisms", type=int, default=8192, help="most organisms that can ever be alive")
+    p.add_argument("--census-every", type=int, default=1800, help="simulated seconds between censuses")
+    g = p.add_argument_group("environment (defaults in evotrader/config.py)")
+    g.add_argument("--taker-fee", dest="taker_fee", type=float)
+    g.add_argument("--half-spread", dest="half_spread", type=float)
+    g.add_argument("--max-leverage", dest="max_leverage", type=int)
+    g.add_argument("--initial-capital", dest="initial_capital", type=float)
+    g.add_argument("--death-ratio", dest="death_ratio", type=float)
+    g.add_argument("--repro-ratio", dest="repro_ratio", type=float)
+    g.add_argument("--seed", type=int, default=0)
+    p.set_defaults(fn=cmd_planet)
+
+    p = sub.add_parser("view", help="one HTML page to watch a planet run")
+    p.add_argument("--run", default="runs/planet")
+    p.add_argument("--out")
+    p.add_argument("--frames", type=int, default=400, help="most census frames to include")
+    p.set_defaults(fn=cmd_view)
+
     args = ap.parse_args(argv)
+    if args.cmd == "planet" and not args.synthetic and not args.resume and not args.start:
+        ap.error("planet: give --synthetic DAYS, or --from DAY for the 1-second store")
     args.fn(args)
 
 

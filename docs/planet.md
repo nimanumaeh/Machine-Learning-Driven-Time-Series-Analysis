@@ -80,7 +80,11 @@ None of these encodes what matters. Evolution can later be given the physiology 
 Each organism is a few hundred numbers, so very many can live at once.
 
 1. **A body.** Wealth, held in one exact BTCUSDT perpetual account. A cell on the planet. A timescale, set by its latitude. Death below half its reference wealth; division above 1.25 times.
-2. **Organs of perception: K = 6 self-made programs.** Each is $z_\tau(\mathrm{op}_k(a - b))$ over whatever its place lets it sense. Each organ has an *integrity* that decays every tick and is restored only by being salient. Organs that stop mattering dissolve and are replaced. The organism keeps remaking its own perception.
+2. **Organs of perception: K = 6 self-made programs.** Each is $z_\tau(\mathrm{op}_k(a - b))$ over whatever its place lets it sense. The organism keeps remaking its own perception:
+   - Each organ has an *integrity*. Every 8 ticks it is pulled toward the organ's share of the organism's salience (capped at full), and it wears a little every tick.
+   - A young organ is not judged for its first 64 ticks: it needs time to warm up and to be learned through.
+   - An organ whose integrity falls below a threshold dissolves, and a random organ takes its place (generate and test).
+   - How hard the organism prunes is its efficiency–resiliency dial: at full efficiency an organ needs about average salience to stay; at full resiliency almost anything stays.
 3. **A participatory learner.** What each of its 9 possible crop intensities would have done to *its own* wealth in each perceived situation. It learns from the actual path of the world run through its own account: full counterfactual experience, no theory.
 4. **A salience landscape.** The sensitivity of its own values to each of its own organs, given its current exposure and costs.
 5. **Two opponent dials.**
@@ -88,7 +92,7 @@ Each organism is a few hundred numbers, so very many can live at once.
    - **Efficiency–resiliency:** pushed toward pruning by stability, toward keeping variety by turbulence.
 6. **Two modes.**
    - **Habitual (unconscious):** every tick it acts on its learned values. Every few ticks it re-landscapes salience and maintains its organs.
-   - **Higher-order (conscious):** opened by a learned gate. It rebuilds organs deliberately (mutations of what is salient, guided by query–key anticipation), breaks frames when stuck, migrates, builds and marks. It costs disruption: new organs start cold, and moving resets perception.
+   - **Higher-order (conscious):** opened by a learned gate. It rebuilds its weakest 1 to 3 organs deliberately (more when exploring, which is how it breaks a frame when stuck), may migrate, and may build. The new organs are mutations of its most salient ones or new ideas, weighed by its own *anticipation*: a query–key attention model, one per organism, that learns from the organism's own salience measurements which kinds of organ tend to matter to a body like its own, and is passed on to its children. This is learning about its own learning. Consciousness costs disruption: new organs start cold, and moving to another latitude resets perception.
    - **Gate learning:** the gate compares how grip changed after episodes with how it drifts without them, and adjusts itself. This is relevance realization about when to realize relevance at a higher order.
 7. **Inheritance.** Children start with the parent's organs, values, dials and gate, then mutate.
 
@@ -97,6 +101,7 @@ Each organism is a few hundred numbers, so very many can live at once.
 **Latitude is timescale.**
 - The equator ticks every second. Bands toward the poles tick every 5s, 30s, 2m, 10m, 1h, 6h and 1d.
 - An organism's latitude sets how fast its world moves: its tick, and its crops' growing period (its horizon).
+- Moving is slow in planetary time: at every latitude up to 10 minutes, an organism gets the same number of chances to move per hour. Otherwise fast organisms, which live through many more ticks, would drain toward the slow poles for no reason but their clock.
 - The equator is turbulent and expensive: fees dominate there. The poles are slow and seasonal.
 - Climate zones are the market at different resolutions.
 
@@ -132,8 +137,8 @@ We cannot change BTC: it is the sun and the weather. Organisms shape the planet 
   - A conscious organism can externalize one of its salient organs into its place.
   - Everyone living there can then perceive that organ's output as a new sense.
   - An observatory may also be a variant that looks at a stream the place itself cannot sense, like a telescope.
-  - Observatories decay, and are repaired by the organisms that find them salient. Useful ones persist across generations. This is ecological inheritance: the closest thing to propositional knowledge, being public, persistent and shareable.
-- **Markers (stigmergy).** Organisms leave traces of how life has gone in a place: recent harvests and crowding. Others can perceive these traces and use them to decide where to go.
+  - Observatories wear away with every tick of their band, so what nobody uses disappears. They are repaired by the organisms that find them salient, and a newcomer can only build over an empty slot or one worn below half, so a well-kept observatory is not torn down. Useful ones persist across generations. This is ecological inheritance: the closest thing to propositional knowledge, being public, persistent and shareable.
+- **Markers (stigmergy).** Organisms leave traces of how life has gone in a place: recent harvests (as log growth per day, so latitudes compare) and crowding. Traces fade in the band's own time. Others can perceive these traces as senses, and a migrating organism that is not exploring moves toward a neighbor whose harvests have gone better than its own place's.
 - **Space.** Places fill up. Newborns spread to neighboring cells, migrations relieve crowding, and empty places get re-seeded.
 
 Settlements, migrations, specialized peoples by latitude and continent, and the slow accumulation of maintained observatories (a civilization's infrastructure) are what we hope to see. None of it is scripted.
@@ -154,8 +159,22 @@ Settlements, migrations, specialized peoples by latitude and continent, and the 
   - Storage is one file per day.
   - At 1 second, liquidation uses the trade high and low, because no 1-second mark price exists. This is stricter than the exchange.
 - **Compute.** Organisms are columns in arrays, and each band only works on its own tick.
-  - 1-second organisms are the expensive ones. They are also the ones fees starve.
-  - Thousands of organisms run on a laptop CPU. The same array code ports to a GPU (JAX) for hundreds of thousands.
+  - 1-second organisms are the expensive ones: their band ticks 86,400 times a day. They are also the ones fees starve.
+  - Measured on one CPU core: about 4 ms per simulated second for 600 organisms and 14 ms for 3,000, so about 10 minutes per simulated day at 1,000. A year of 1-second data at 1,000 organisms is about 2.5 days of one core.
+  - The same array code ports to a GPU (JAX) for hundreds of thousands of organisms.
+
+## 7b. Running it
+
+```bash
+python -m evotrader seconds --from 2024-01-01              # 1-second rows from every perpetual trade
+python -m evotrader planet --from 2024-01-01 --run runs/planet
+python -m evotrader planet --synthetic 10 --run runs/synth # a synthetic market, for testing; --null plants nothing
+python -m evotrader view --run runs/planet                 # one self-contained HTML page
+```
+
+A run directory keeps the whole world (`planet.pkl`, to resume exactly), one census per half hour of
+simulated time (`census.jsonl`), and how the world was made (`meta.json`). `--resume` carries a run on;
+Ctrl-C or a kill saves it first.
 
 ## 8. What we will watch for, and how we will know
 

@@ -128,6 +128,9 @@ class Life:
         self.counts = {"born": 0, "seeded": 0, "died": 0, "displaced": 0, "migrated": 0,
                        "built": 0, "episodes": 0, "organs_made": 0}
         self._senses = None
+        # moving is a slow affair in planetary time: a 1-second organism gets as many
+        # chances to move per hour as a 10-minute one, not 600 times as many
+        self.roam = np.minimum(1.0, TAU / 600.0)
         self.t = 0.0
         self.price = self.mark = self.price0 = np.nan
 
@@ -188,7 +191,7 @@ class Life:
         v = np.nan_to_num(self.value[idx])
         phi = _phi(v)
         Wf = self._shrunk(idx)
-        Qv = np.einsum("nd,ndh->nh", phi, Wf)
+        Qv = (phi[:, None, :] @ Wf)[:, 0]
         xmax, lam = self.max_exposure(idx), self.exposure(idx)
         cost = self.cfg.taker_fee + self.cfg.half_spread / self.price
         score, x_all, stay = _scores(Qv, xmax, lam, cost)
@@ -296,11 +299,12 @@ class Life:
         pl.growth[hit, y] += w * (mean - pl.growth[hit, y])
 
     def _rls(self, idx, phi, Y):
+        """Recursive least squares with forgetting, one step for each organism."""
         lam = 1.0 - 1.0 / self.memory[idx]
         P, W = self.P[idx], self.W[idx]
-        Pphi = np.einsum("nij,nj->ni", P, phi)
-        k = Pphi / (lam + np.einsum("ni,ni->n", phi, Pphi))[:, None]
-        E = Y - np.einsum("nd,ndh->nh", phi, W)
+        Pphi = (P @ phi[:, :, None])[:, :, 0]
+        k = Pphi / (lam + (phi * Pphi).sum(1))[:, None]
+        E = Y - (phi[:, None, :] @ W)[:, 0]
         W += k[:, :, None] * E[:, None, :]
         P -= k[:, :, None] * Pphi[:, None, :]
         P /= lam[:, None, None]
@@ -311,7 +315,9 @@ class Life:
         self.nupd[idx] += 1
 
     def _shrunk(self, idx):
-        var_w = self.s2[idx][:, None, :] * np.diagonal(self.P[idx], axis1=1, axis2=2)[:, :, None]
+        """Values believed only as far as the evidence goes: w max(0, 1 - Var(w) / w^2)."""
+        d = np.arange(D)
+        var_w = self.s2[idx][:, None, :] * self.P[idx[:, None], d, d][:, :, None]
         W = self.W[idx]
         return W * np.maximum(0.0, 1.0 - var_w / (W * W + 1e-30))
 
@@ -343,32 +349,36 @@ class Life:
             self._dials(due)
         r = self.resilience[idx]
         self.integrity[idx] -= (0.002 * (1.5 - r))[:, None]
-        worn = self.integrity[idx] < (0.5 * (1.0 - r))[:, None]
-        for n, slot in zip(*np.nonzero(worn)):
-            self._replace(idx[n], slot, self._random_program(idx[n]))
+        rows, slots = np.nonzero(self.integrity[idx] < (0.5 * (1.0 - r))[:, None])
+        if len(rows):
+            for i, slot, prog in zip(idx[rows], slots, self._blind_programs(idx[rows])):
+                self._replace(i, slot, prog)
         self.age[idx] += 1
 
     def perspective(self, idx, delta=1.0):
         """Salience: how much what the world offers the organism moves when one of its
-        own organs moves, on its own values at its own recent situations (finite
+        own organs moves, on its own values at its own recent situations (central
         differences, averaged as an expected gradient outer product). Returns the
         total sensitivity; zero means nothing it perceives matters to it yet."""
-        O = self.recent[idx]
+        n = len(idx)
+        O = self.recent[idx]                                         # (n, R, K)
         mask = (np.arange(R)[None, :] < self.recent_n[idx][:, None]).astype(float)
-        probe = np.concatenate([O[:, :, None, :] + delta * np.eye(K),
-                                O[:, :, None, :] - delta * np.eye(K)], 2)
-        Qv = np.einsum("nrpd,ndh->nrph", _phi(probe), self._shrunk(idx))
+        Wf = self._shrunk(idx)
+        base = _phi(O) @ Wf                                          # (n, R, A)
+        Wk = Wf[:, :3 * K].reshape(n, 3, K, N_ACT).transpose(0, 2, 1, 3)   # (n, K, 3, A)
+        relu = lambda u: np.maximum(u, 0.0)
         cost = self.cfg.taker_fee + self.cfg.half_spread / self.price
-        shape = Qv.shape[:-1]
-        xmax = np.broadcast_to(self.max_exposure(idx)[:, None, None], shape)
-        lam = np.broadcast_to(self.exposure(idx)[:, None, None], shape)
-        score, _, stay = _scores(Qv, xmax, lam, cost)
-        V = np.maximum(score.max(-1), stay)
-        dV = (V[..., :K] - V[..., K:]) / (2 * delta) * mask[..., None]
-        Cm = np.einsum("nrb,nrc->nbc", dV, dV) / np.maximum(mask.sum(1), 1)[:, None, None]
-        tr = np.trace(Cm, axis1=1, axis2=2)
-        self.salience[idx] = np.where(tr[:, None] > 0, np.diagonal(Cm, axis1=1, axis2=2)
-                                      / np.maximum(tr, 1e-300)[:, None], 1.0 / K)
+        xmax, lam = self.max_exposure(idx), self.exposure(idx)
+        V = []
+        for sign in (1.0, -1.0):                                     # moving one organ moves only
+            v1 = O + sign * delta                                    # its own three features
+            d = np.stack([v1 - O, relu(v1 - 1) - relu(O - 1), relu(-v1 - 1) - relu(-O - 1)], -1)
+            Qv = base[:, :, None, :] + (d.transpose(0, 2, 1, 3) @ Wk).transpose(0, 2, 1, 3)
+            V.append(_best_value(Qv, xmax, lam, cost))
+        dV = (V[0] - V[1]) / (2 * delta) * mask[..., None]           # (n, R, K)
+        diag = (dV * dV).sum(1) / np.maximum(mask.sum(1), 1)[:, None]
+        tr = diag.sum(1)
+        self.salience[idx] = np.where(tr[:, None] > 0, diag / np.maximum(tr, 1e-300)[:, None], 1.0 / K)
         seasoned = (self.age[idx] > 16) & (tr[:, None] > 0)
         if seasoned.any():
             rows, slots = np.nonzero(seasoned)
@@ -384,18 +394,27 @@ class Life:
         k = self.a_E[i][tokens + OFFSETS].sum(1)
         return k @ (body @ self.a_Wq[i]) / np.sqrt(D_KEY)
 
+    def _anticipate_many(self, orgs, tokens):
+        """Each organism's anticipated log-salience of its own candidates (m, n, 5)."""
+        k = self.a_E[orgs[:, None, None], tokens + OFFSETS].sum(2)          # (m, n, d)
+        q = (self.body_state(orgs)[:, None, :] @ self.a_Wq[orgs])           # (m, 1, d)
+        return (k @ q.transpose(0, 2, 1))[..., 0] / np.sqrt(D_KEY)
+
     def _learn_anticipation(self, org, body, tokens, target, lr=0.03, decay=1e-4):
         """One gradient step of each organism's anticipation toward the salience it measured."""
         rows = tokens + OFFSETS
         k = self.a_E[org[:, None], rows].sum(1)
-        q = np.einsum("mb,mbd->md", body, self.a_Wq[org])
+        q = (body[:, None, :] @ self.a_Wq[org])[:, 0]
         per = np.bincount(org, minlength=self.N)[org]
         g = (((q * k).sum(1) / np.sqrt(D_KEY) - target) / (np.sqrt(D_KEY) * per))[:, None]
         u = np.unique(org)
         self.a_Wq[u] *= 1 - lr * decay
         self.a_E[u] *= 1 - lr * decay
-        np.add.at(self.a_Wq, org, -lr * body[:, :, None] * (g * k)[:, None, :])
-        np.add.at(self.a_E, (org[:, None], rows), -lr * (g * q)[:, None, :])
+        _scatter_add(self.a_Wq.reshape(self.N, -1), org,
+                     (-lr * body[:, :, None] * (g * k)[:, None, :]).reshape(len(org), -1))
+        F = self.a_E.shape[1]
+        _scatter_add(self.a_E.reshape(self.N * F, D_KEY), (org[:, None] * F + rows).ravel(),
+                     np.repeat(-lr * g * q, rows.shape[1], axis=0))
         self.a_n[u] += 1
 
     def _repair_observatories(self, idx, y, share):
@@ -445,17 +464,24 @@ class Life:
         return open_
 
     def _reorganize(self, idx, y):
-        """What a conscious moment can do: rebuild organs, migrate, build."""
+        """What a conscious moment can do: rebuild organs deliberately, migrate, build."""
         rng = self.rng
-        dens, cap = self._density(), self.planet.capacity()
-        for i in idx:
-            n_new = 1 + int(round(2 * self.explore[i]))
-            for slot in np.argsort(self.integrity[i] * self.salience[i])[:n_new]:
-                self._replace(i, slot, self._constructed_program(i))
-            if rng.random() < 0.3 * self.explore[i] + 0.1:
+        n_new = 1 + np.round(2 * self.explore[idx]).astype(np.int64)   # more when exploring
+        weakest = np.argsort(self.integrity[idx] * self.salience[idx], 1)
+        rows, ranks = np.nonzero(np.arange(K)[None, :] < n_new[:, None])
+        orgs, slots = idx[rows], weakest[rows, ranks]
+        progs, novel = self._constructed_programs(orgs)
+        for i, slot, prog in zip(orgs[novel], slots[novel], progs[novel]):
+            if not (self.prog[i] == prog).all(1).any():
+                self._replace(i, slot, prog)
+        move = idx[rng.random(len(idx)) < (0.3 * self.explore[idx] + 0.1) * self.roam[y]]
+        build = idx[rng.random(len(idx)) < self.p_build[idx]]
+        if len(move):
+            dens, cap = self._density(), self.planet.capacity()
+            for i in move:
                 self._migrate(i, dens, cap)
-            if rng.random() < self.p_build[i]:
-                self._build(i)
+        for i in build:
+            self._build(i)
 
     def _migrate(self, i, dens, cap):
         """Move to a neighboring place with room: where harvests have gone better than
@@ -506,67 +532,100 @@ class Life:
             self.counts["built"] += 1
 
     # ------------------------------------------------------------- organs
-    def _senses_here(self, i):
-        """Every channel an organ can read at the organism's place."""
-        pl = self.planet
+    def _sense_table(self):
+        """Every channel an organ can read at each place, padded (X, Y, S), and how many."""
         if self._senses is None:                           # geography is fixed at the planet's birth
+            pl = self.planet
             culture = ZERO + 1 + np.arange(CULTURE)
-            self._senses = [[np.concatenate([np.nonzero(pl.avail[x, y, :ZERO])[0], culture])
-                             for y in range(pl.Y)] for x in range(pl.X)]
-        return self._senses[self.x[i]][self.y[i]]
+            lists = [[np.concatenate([np.nonzero(pl.avail[x, y, :ZERO])[0], culture])
+                      for y in range(pl.Y)] for x in range(pl.X)]
+            table = np.full((pl.X, pl.Y, max(len(c) for r in lists for c in r)), ZERO, np.int64)
+            count = np.zeros((pl.X, pl.Y), np.int64)
+            for x in range(pl.X):
+                for y in range(pl.Y):
+                    table[x, y, :len(lists[x][y])] = lists[x][y]
+                    count[x, y] = len(lists[x][y])
+            self._senses = (table, count)
+        return self._senses
 
-    def _random_programs(self, i, n):
-        """n blind variants: random programs over the senses of the place."""
+    def _draw_senses(self, orgs, n):
+        """(len(orgs), n) channels drawn at random from what each organism's place offers."""
+        table, count = self._sense_table()
+        x, y = self.x[orgs][:, None], self.y[orgs][:, None]
+        return table[x, y, (self.rng.random((len(orgs), n)) * count[x, y]).astype(np.int64)]
+
+    def _random_programs(self, orgs, n):
+        """n blind variants for each organism: random programs over the senses of its place."""
         rng = self.rng
-        senses = self._senses_here(i)
-        a = senses[rng.integers(len(senses), size=n)]
-        b = np.where(rng.random(n) < 0.5, ZERO, senses[rng.integers(len(senses), size=n)])
+        m = len(orgs)
+        a = self._draw_senses(orgs, n)
+        b = np.where(rng.random((m, n)) < 0.5, ZERO, self._draw_senses(orgs, n))
         b[b == a] = ZERO
-        op = rng.integers(len(OPS), size=n)
+        op = rng.integers(len(OPS), size=(m, n))
         no_past = ((a > ZERO) | (b > ZERO)) & ((op == 1) | (op == 3))  # culture has no history
         op[no_past] = 2 * rng.integers(2, size=int(no_past.sum()))
-        return np.stack([a, b, op, rng.integers(len(LAGS), size=n), rng.integers(len(NORMS), size=n)], 1)
+        return np.stack([a, b, op, rng.integers(len(LAGS), size=(m, n)),
+                         rng.integers(len(NORMS), size=(m, n))], -1)
 
-    def _random_program(self, i):
-        return self._random_programs(i, 1)[0]
-
-    def _mutants(self, i, parents):
-        """One small change to each parent program: a field swapped or a time constant nudged."""
+    def _mutants(self, orgs, parents):
+        """One small change to each parent (len(orgs), n, 5): a part swapped or a time
+        constant nudged."""
         rng = self.rng
-        p = np.array(parents, dtype=np.int64, copy=True).reshape(-1, 5)
-        n = len(p)
-        senses = self._senses_here(i)
-        f = rng.integers(5, size=n)
-        new_a = senses[rng.integers(len(senses), size=n)]
-        new_b = np.where(rng.random(n) < 0.3, ZERO, senses[rng.integers(len(senses), size=n)])
-        step = 2 * rng.integers(2, size=n) - 1
-        p[f == 0, 0] = new_a[f == 0]
-        p[f == 1, 1] = new_b[f == 1]
-        p[f == 2, 2] = rng.integers(len(OPS), size=int((f == 2).sum()))
-        p[f == 3, 3] = np.clip(p[f == 3, 3] + step[f == 3], 0, len(LAGS) - 1)
-        p[f == 4, 4] = np.clip(p[f == 4, 4] + step[f == 4], 0, len(NORMS) - 1)
-        p[p[:, 1] == p[:, 0], 1] = ZERO
-        p[((p[:, 0] > ZERO) | (p[:, 1] > ZERO)) & ((p[:, 2] == 1) | (p[:, 2] == 3)), 2] = 2
+        p = np.array(parents, dtype=np.int64)
+        m, n = p.shape[:2]
+        f = rng.integers(5, size=(m, n))
+        new_a = self._draw_senses(orgs, n)
+        new_b = np.where(rng.random((m, n)) < 0.3, ZERO, self._draw_senses(orgs, n))
+        step = 2 * rng.integers(2, size=(m, n)) - 1
+        p[..., 0] = np.where(f == 0, new_a, p[..., 0])
+        p[..., 1] = np.where(f == 1, new_b, p[..., 1])
+        p[..., 2] = np.where(f == 2, rng.integers(len(OPS), size=(m, n)), p[..., 2])
+        p[..., 3] = np.where(f == 3, np.clip(p[..., 3] + step, 0, len(LAGS) - 1), p[..., 3])
+        p[..., 4] = np.where(f == 4, np.clip(p[..., 4] + step, 0, len(NORMS) - 1), p[..., 4])
+        p[..., 1] = np.where(p[..., 1] == p[..., 0], ZERO, p[..., 1])
+        culture = (p[..., 0] > ZERO) | (p[..., 1] > ZERO)
+        p[..., 2] = np.where(culture & ((p[..., 2] == 1) | (p[..., 2] == 3)), 2, p[..., 2])
         return p
 
-    def _mutate(self, i, p):
-        return self._mutants(i, p)[0]
+    def _random_program(self, i):
+        return self._random_programs(np.array([i]), 1)[0, 0]
 
-    def _constructed_program(self, i):
-        """Deliberate construction: variants of what matters and some new ideas, chosen
-        by the organism's own anticipation of what will matter once it has some."""
+    def _mutate(self, i, p):
+        return self._mutants(np.array([i]), np.asarray(p)[None, None])[0, 0]
+
+    def _novel(self, orgs, pool):
+        """Which candidates (m, n, 5) are not already organs of their organism."""
+        return ~(pool[:, :, None, :] == self.prog[orgs][:, None, :, :]).all(-1).any(-1)
+
+    def _blind_programs(self, orgs):
+        """Habitual replacement: one random new organ for each entry of `orgs`."""
+        pool = self._random_programs(orgs, 4)
+        pick = np.argmax(self._novel(orgs, pool), 1)
+        return pool[np.arange(len(orgs)), pick]
+
+    def _constructed_programs(self, orgs):
+        """Deliberate construction, one new organ for each entry of `orgs`: variants of
+        what matters to it (with probability p_mutate) or new ideas, weighed by its own
+        anticipation of what will matter once it has learned some. Returns the
+        programs and which of them are new to their organism."""
         rng = self.rng
-        top = self.prog[i][np.argsort(-self.salience[i])[:2]]
-        pool = np.concatenate([self._random_programs(i, 8),
-                               self._mutants(i, top[rng.integers(2, size=int(16 * self.p_mutate[i]))])])
-        new = ~(pool[:, None, :] == self.prog[i][None]).all(-1).any(1)
-        pool = pool[new] if new.any() else self._random_programs(i, 1)
-        if self.a_n[i] > 50:
-            z = self._anticipate(i, self.body_state(np.array([i]))[0], pool)
-            p = np.exp(z - z.max())
-            p = 0.8 * p / p.sum() + 0.2 / len(pool)
-            return pool[rng.choice(len(pool), p=p)]
-        return pool[rng.integers(len(pool))]
+        m = len(orgs)
+        ranked = np.argsort(-self.salience[orgs], 1)[:, :2]
+        top = self.prog[orgs[:, None], ranked]                                  # (m, 2, 5)
+        parents = top[np.arange(m)[:, None], rng.integers(2, size=(m, 16))]
+        pool = np.concatenate([self._random_programs(orgs, 8), self._mutants(orgs, parents)], 1)
+        pm = self.p_mutate[orgs][:, None]
+        p = np.concatenate([np.broadcast_to((1 - pm) / 8, (m, 8)), np.broadcast_to(pm / 16, (m, 16))], 1)
+        seasoned = self.a_n[orgs] > 50
+        if seasoned.any():
+            z = self._anticipate_many(orgs[seasoned], pool[seasoned])
+            a = np.exp(z - z.max(1, keepdims=True))
+            p[seasoned] *= 0.8 * a / a.sum(1, keepdims=True) + 0.2 / pool.shape[1]
+        novel = self._novel(orgs, pool)
+        p = np.where(novel, p, 0.0)
+        p /= np.maximum(p.sum(1, keepdims=True), 1e-300)
+        pick = np.minimum((np.cumsum(p, 1) < rng.random(m)[:, None]).sum(1), pool.shape[1] - 1)
+        return pool[np.arange(m), pick], novel[np.arange(m), pick]
 
     def _replace(self, i, slot, program):
         """A new organ in `slot`: it starts cold, and what was learned through the old one is let go."""
@@ -826,6 +885,28 @@ def _scores(Qv, xmax, lam, cost):
     stay = ((1 - w) * np.take_along_axis(Qv, j[..., None], -1)[..., 0]
             + w * np.take_along_axis(Qv, (j + 1)[..., None], -1)[..., 0])
     return score, x, stay
+
+
+def _best_value(Qv, xmax, lam, cost):
+    """What the best of moving or staying is worth, for values Qv (n, ..., A) of an
+    organism with reach xmax and exposure lam (n,)."""
+    n = len(xmax)
+    shape = (n,) + (1,) * (Qv.ndim - 2)
+    move = (cost * np.abs(ACTIONS * xmax[:, None] - lam[:, None])).reshape(shape + (N_ACT,))
+    u = np.clip(lam / np.maximum(xmax, 1e-12), -1, 1)
+    j = np.clip(np.searchsorted(ACTIONS, u) - 1, 0, N_ACT - 2)
+    w = ((u - ACTIONS[j]) / (ACTIONS[j + 1] - ACTIONS[j])).reshape(shape)
+    lo = np.take_along_axis(Qv, np.broadcast_to(j.reshape(shape + (1,)), Qv.shape[:-1] + (1,)), -1)[..., 0]
+    hi = np.take_along_axis(Qv, np.broadcast_to((j + 1).reshape(shape + (1,)), Qv.shape[:-1] + (1,)), -1)[..., 0]
+    return np.maximum((Qv - move).max(-1), (1 - w) * lo + w * hi)
+
+
+def _scatter_add(target, rows, values):
+    """target[rows] += values, adding up repeated rows (a fast np.add.at for 2-D)."""
+    order = np.argsort(rows, kind="stable")
+    r = rows[order]
+    starts = np.r_[0, np.nonzero(r[1:] != r[:-1])[0] + 1]
+    target[r[starts]] += np.add.reduceat(values[order], starts, axis=0)
 
 
 def _nearest(lam, xmax):
