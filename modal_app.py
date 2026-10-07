@@ -25,7 +25,6 @@ import shlex
 import subprocess
 import sys
 import threading
-import time
 
 import modal
 
@@ -158,16 +157,16 @@ def abiogenesis(name: str, args: str = "", gpu: str = GPU):
 def transplant(name: str, start: str, until: str, k: int = 10, baseline: int = 5):
     """Read a world's richest organisms back as strategies on data they never saw (transplant.py)."""
     sys.path.insert(0, "/root")
+    import numpy as np
     from evotrader import data, data_seconds, planet_run
     from evotrader.transplant import evaluate
     volume.reload()
     pl, world = planet_run.load(f"{VOL}/runs/{name}/planet.pkl")
-    ms = lambda day: int(time.mktime(time.strptime(day, "%Y-%m-%d")) - time.timezone) * 1000
+    ms = lambda day: int(np.datetime64(day, "ms").astype(np.int64))
     if pl.step_s == 60:
         blocks = data.iter_blocks(f"{VOL}/data/market", "BTCUSDT", ms(start), ms(until))
     else:
         blocks = data_seconds.iter_second_blocks(f"{VOL}/data/seconds", "BTCUSDT", ms(start), ms(until))
-    import numpy as np
     rows = np.concatenate(list(blocks))
     print(f"{name}: {k} richest organisms and {baseline} random tapes, on {len(rows)} unseen rows")
     evaluate(world, rows, k=k, baseline=baseline)

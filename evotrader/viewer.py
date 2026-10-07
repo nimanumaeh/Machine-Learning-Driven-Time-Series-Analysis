@@ -141,8 +141,8 @@ h2 { font-family: var(--display); font-stretch: 112%; font-weight: 650; font-siz
           border: 1px solid var(--rule); }
 .vital { background: var(--sheet); padding: 10px 14px; display: grid; gap: 2px; min-width: 0; }
 .vital .k { font-size: 11.5px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); font-stretch: 108%; }
-.vital .v { font-family: var(--mono); font-size: 19px; font-variant-numeric: tabular-nums; white-space: nowrap;
-            overflow: hidden; text-overflow: ellipsis; }
+.vital .v { font-family: var(--mono); font-size: 19px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere;
+            line-height: 1.25; }
 .vital .s { font-family: var(--mono); font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .pos { color: var(--gain); } .neg { color: var(--loss); }
 .panel { background: var(--sheet); border: 1px solid var(--rule); padding: 14px 16px 16px; display: grid; gap: 12px;
