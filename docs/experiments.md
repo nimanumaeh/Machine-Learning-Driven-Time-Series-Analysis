@@ -34,5 +34,28 @@ Seeds 11–13 for the planted world; seed 11 for the null world.
 
 ## Results: anticipation (query-key attention over the grammar)
 
-Pending: the runs are in progress. Same seeds, salience mode with anticipation
-switched on, plus a null-world run to check that it does not invent relevance.
+Same markets (seeds 11–13), salience mode with anticipation switched on: new
+aspects are chosen by learned query–key attention instead of uniformly.
+
+| Planted world | Returns by seed | Mean | Profitable seeds | Crowd salience |
+|---|---|---|---|---|
+| salience, no anticipation | +21.6, −28.1, −17.5 | −8.0% | 1/3 | 0.47 |
+| random attention | +17.1, −19.8, −28.7 | −10.4% | 1/3 | 0.51 |
+| salience + anticipation | +25.7, −24.3, +29.1 | **+10.2%** | **2/3** | 0.46 |
+
+**In the null world anticipation did not invent relevance.** Crowd salience was
+0.26, below the 0.32 base rate. Returns were −30.2%, in line with the other
+modes.
+
+**This is promising but not established.**
+- Paired by seed, the gain over no anticipation is +4, +4 and +47 points. The mean is carried by one seed.
+- Run-to-run noise is large. The never-selected controls swing about ±15 points between runs of the *same* market, from random draws alone.
+- A batch of six more paired seeds (14–19) is running to settle it.
+
+**Grip, split.** In both worlds the median agent's grip on *direction* is about
+zero (−0.005). Its grip on *volatility* is positive (+0.07 planted, +0.17 null).
+The directional edge in the planted world is too faint to show in the typical
+agent's log-score. The profits come from a minority of agents and from sizing up
+when the signal is strong. This matters for the next step: loss of grip on
+direction is not yet a usable trigger for "my scripts stopped working". A
+changepoint detector on the agent's own outcomes is the better-founded signal.
