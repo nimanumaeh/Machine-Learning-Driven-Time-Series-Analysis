@@ -7,6 +7,7 @@ money split into children. Nothing here touches a real account.
 - `docs/data.md`: what the arena is made of: the exact data streams, which years, and how rows become a world.
 - `docs/relevance-realization-design.md`: the theory and the math of the relevance-realizing agents.
 - `docs/planet.md`: the planet made of 1-second BTC data, and the smallest Vervaekean organisms that live on it.
+- `docs/soup.md`: a soup of living matter on the same planet, where nothing is designed and BTC is the sun.
 
 ## Layers
 
@@ -23,6 +24,8 @@ money split into children. Nothing here touches a real account.
 | Planet | `planet.py` | a world made of the market: latitude is timescale (1 second at the equator to 1 day at the pole), longitude decides which senses exist; observatories and markers are built by its inhabitants |
 | Life | `life.py` | very many minimal organisms as array columns: an exact account as body, self-made organs kept alive by salience, two opponent dials, a learned gate into a higher-order mode that rebuilds organs, migrates and builds |
 | Watching | `planet_run.py`, `viewer.py` | censuses of life over time, checkpoints, and one self-contained HTML page per run |
+| Soup | `soup.py` | matter, space, time, energy and a few physical laws (Kleiber, Landauer, digestion); replication, death, predation and trading are left to emerge |
+| Transplant | `transplant.py` | lift any matter out of a soup and run it on unseen data: its positions are its strategy |
 
 ## Use
 
@@ -48,6 +51,14 @@ python -m evotrader planet --from 2024-01-01 --run runs/planet
 python -m evotrader planet --synthetic 10 --run runs/planet-synth          # or --null for nothing planted
 python -m evotrader planet --run runs/planet --resume      # Ctrl-C saves; this carries on
 python -m evotrader view --run runs/planet                 # runs/planet/planet.html
+```
+
+The soup lives on the same planet, on 1-second or minute data (needs `pip install numba`):
+
+```bash
+python -m evotrader soup --minutes --from 2021-01-01 --until 2025-01-01 --run runs/soup \
+    --heat 0.0001 --digestion 0.8              # Landauer heat, lossy predation
+python experiments/soup_emergence.py           # does life start from random bytes, with no market?
 ```
 
 - `--width` sets the number of longitudes; the 8 latitudes are the timescales.
