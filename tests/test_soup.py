@@ -305,3 +305,31 @@ def test_a_transplanted_organism_runs_on_unseen_data_and_explains_itself():
     d = drivers(res)
     prices = {f"{n} level" for n in ("close", "high", "low", "mark", "spot")}
     assert d and {n for n, _ in d[:5]} <= prices and d[0][1] > 0.3   # it follows the price level
+
+
+def test_soup_runs_render_as_a_census(tmp_path):
+    import json
+    from evotrader import planet_run
+    from evotrader.viewer import is_soup, write_soup_viewer
+    run = tmp_path / "soup"
+    run.mkdir()
+    pl, w = world(max_exposure=125, heat=0.0001, digestion=0.8)
+    (run / "meta.json").write_text(json.dumps({
+        "kind": "soup", "source": "synthetic", "taus": pl.taus.tolist(), "max_exposure": 125,
+        "heat": 0.0001, "digestion": 0.8, "regions": {k: v.astype(int).tolist() for k, v in pl.regions.items()}}))
+    rows = synthetic_rows(1200, seed=4, step_s=1, start_ms=DAY0)
+    planet_run.run_planet(pl, w, rows, str(run), census_every_s=300, log=lambda *a: None)
+    assert is_soup(str(run)) and not is_soup(str(tmp_path))
+    out = tmp_path / "soup.html"
+    n = write_soup_viewer(str(run), str(out))
+    assert n == len(planet_run.read_census(str(run))) >= 3
+    html = out.read_text()
+    assert html.startswith("<!doctype html>") and "<title>BTC Soup Census</title>" in html
+    data = json.loads(html.split('type="application/json">')[1].split("</script>")[0].replace("<\\/", "</"))
+    shown = data["runs"][0]
+    assert shown["label"] == "125x sun, Landauer heat, digestion 80%"
+    assert shown["bands"][0] == "1s" and len(shown["frames"]) == n
+    last = shown["frames"][-1]
+    assert last["energy"] == pytest.approx(float(w.equity().sum())) and last["matter"]["top"]
+    assert write_soup_viewer([str(run), str(run)], str(out), bare=True, max_frames=2) == [2, 2]
+    assert out.read_text().startswith("<title>")

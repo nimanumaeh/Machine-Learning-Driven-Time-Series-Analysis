@@ -274,9 +274,12 @@ def cmd_soup(args):
 
 
 def cmd_view(args):
-    from .viewer import write_viewer
-    out = args.out or os.path.join(args.run[0], "planet.html")
-    n = write_viewer(args.run, out, max_frames=args.frames)
+    from .viewer import is_soup, write_soup_viewer, write_viewer
+    soups = [is_soup(r) for r in args.run]
+    if any(soups) and not all(soups):
+        sys.exit("view: give either planet runs or soup runs, not both")
+    out = args.out or os.path.join(args.run[0], "soup.html" if soups[0] else "planet.html")
+    n = (write_soup_viewer if soups[0] else write_viewer)(args.run, out, max_frames=args.frames)
     print(f"{n} census frames per world written to {out}")
 
 

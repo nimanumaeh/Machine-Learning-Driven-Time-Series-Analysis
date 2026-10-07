@@ -562,3 +562,333 @@ th.num { text-align: right; }
 })();
 </script>
 """
+
+
+# ------------------------------------------------------------------ soups
+SOUP_KEEP = ("t", "price", "price0", "alive", "alive_by_band", "energy", "energy_by_band", "net",
+             "injected", "fees", "funding", "liquidations", "taken", "heat", "long", "short",
+             "mean_abs_exposure", "energy_map", "alive_map", "exposure_map", "matter",
+             "copies_per_interaction", "instructions_per_interaction", "counts")
+
+
+def soup_label(meta):
+    x = meta.get("max_exposure", 1.0)
+    name = f"{x:g}x sun"
+    if meta.get("heat"):
+        name += ", Landauer heat"
+    if meta.get("digestion", 1.0) < 1:
+        name += f", digestion {meta['digestion']:.0%}"
+    return name
+
+
+def soup_page_data(run_dir, max_frames=400):
+    frames = read_census(run_dir)
+    if len(frames) > max_frames:
+        keep = np.unique(np.linspace(0, len(frames) - 1, max_frames).round().astype(int))
+        frames = [frames[k] for k in keep]
+    with open(os.path.join(run_dir, "meta.json")) as f:
+        meta = json.load(f)
+    return {
+        "meta": {k: meta.get(k) for k in ("source", "from", "until", "width", "per_place", "interactions",
+                                            "max_exposure", "heat", "digestion", "bite", "resolution_s")},
+        "run": os.path.basename(os.path.normpath(run_dir)),
+        "label": soup_label(meta),
+        "bands": [_label(T) for T in meta.get("taus", TAU)],
+        "regions": meta.get("regions", {}),
+        "frames": [{k: _finite(f.get(k)) for k in SOUP_KEEP} for f in frames],
+    }
+
+
+def write_soup_viewer(run_dirs, out, max_frames=400, bare=False):
+    run_dirs = [run_dirs] if isinstance(run_dirs, str) else list(run_dirs)
+    runs = [soup_page_data(r, max_frames) for r in run_dirs]
+    data = json.dumps({"runs": runs}, separators=(",", ":"), allow_nan=False).replace("</", "<\\/")
+    html = SOUP_TEMPLATE.replace("__STYLE__", STYLE).replace("__DATA__", data)
+    if not bare:
+        html = ("<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n"
+                "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1, viewport-fit=cover\">\n"
+                + html.replace("<!--body-->", "</head>\n<body>", 1) + "\n</body>\n</html>\n")
+    else:
+        html = html.replace("<!--body-->", "", 1)
+    os.makedirs(os.path.dirname(os.path.abspath(out)), exist_ok=True)
+    with open(out, "w") as f:
+        f.write(html)
+    counts = [len(r["frames"]) for r in runs]
+    return counts[0] if len(counts) == 1 else counts
+
+
+def is_soup(run_dir):
+    try:
+        with open(os.path.join(run_dir, "meta.json")) as f:
+            return json.load(f).get("kind") == "soup"
+    except OSError:
+        return False
+
+
+STYLE = TEMPLATE[TEMPLATE.index("<style>"):TEMPLATE.index("</style>") + len("</style>")]
+
+SOUP_TEMPLATE = r"""<title>BTC Soup Census</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,300..800&family=IBM+Plex+Mono:wght@400;500&display=swap">
+__STYLE__
+<style>
+td.code { font-family: var(--mono); font-size: 12px; word-break: break-all; letter-spacing: 0.02em; }
+</style>
+<!--body-->
+<div class="wrap">
+  <header>
+    <div>
+      <h1>BTC Soup Census</h1>
+      <div class="run" id="run"></div>
+    </div>
+    <div class="clock" id="clock"></div>
+  </header>
+  <div class="tabs" role="group" aria-label="World" id="worlds" hidden></div>
+
+  <section class="vitals" aria-label="Vital signs at this moment" id="vitals"></section>
+
+  <section class="panel" aria-labelledby="map-title">
+    <div class="panel-head">
+      <h2 id="map-title">Where the energy lives</h2>
+      <div class="tabs" role="group" aria-label="Map layer" id="layers"></div>
+    </div>
+    <div class="map-scroll"><svg id="map" role="img" aria-label="Map of the planet"></svg></div>
+    <div class="legend" id="legend"></div>
+    <div class="scrub">
+      <button id="play" type="button">Play</button>
+      <input id="frame" type="range" min="0" value="0" aria-label="Moment of the run">
+    </div>
+  </section>
+
+  <div class="grid2">
+    <section class="panel" aria-labelledby="life-title">
+      <h2 id="life-title">Order in the matter</h2>
+      <svg id="complexity" role="img" aria-label="High-order entropy of the soup over time"></svg>
+      <div class="key" id="complexity-key"></div>
+    </section>
+    <section class="panel" aria-labelledby="money-title">
+      <h2 id="money-title">Money: the whole soup, in USDT</h2>
+      <svg id="money" role="img" aria-label="Soup profit and loss over time"></svg>
+      <div class="key" id="money-key"></div>
+    </section>
+    <section class="panel" aria-labelledby="energy-title">
+      <h2 id="energy-title">Energy by latitude</h2>
+      <svg id="energy" role="img" aria-label="Energy held at each timescale over time"></svg>
+      <div class="key" id="band-key"></div>
+    </section>
+    <section class="panel" aria-labelledby="pos-title">
+      <h2 id="pos-title">Positions held</h2>
+      <svg id="positions" role="img" aria-label="Share of sites long and short over time"></svg>
+      <div class="key" id="pos-key"></div>
+    </section>
+  </div>
+
+  <section class="panel" aria-labelledby="prog-title">
+    <h2 id="prog-title">The most common programs</h2>
+    <div class="table-scroll"><table id="programs"></table></div>
+  </section>
+
+  <section class="panel" aria-labelledby="compare-title" id="compare-panel" hidden>
+    <h2 id="compare-title">The worlds side by side, at their last census</h2>
+    <div class="table-scroll"><table id="compare"></table></div>
+  </section>
+
+  <section class="note" aria-label="How to read this">
+    <p>Nothing here is designed. Every site holds 64 bytes of matter and one exact BTCUSDT account. When neighboring
+       sites interact, their bytes run as one program: heads move, bytes change and are copied, loops repeat, and four
+       instructions read the market, read the site's own energy or position, set its exposure, or move a bite of energy.
+       Replication, death, predation and trading are not written anywhere.</p>
+    <p>Order in the matter is high-order entropy: near zero while matter is random, rising when copies of a few
+       programs fill the soup. A program is shown as its instructions: <code>&lt; &gt;</code> and <code>{ }</code> move
+       the two heads, <code>+ -</code> change a byte, <code>. ,</code> copy between the heads, <code>[ ]</code> loop,
+       <code>S</code> senses, <code>E</code> reads itself, <code>A</code> acts, <code>T</code> bites; a dot is inert data.</p>
+    <p>Money moves only through the market (fees, spread, funding and liquidations exactly as on the exchange) and
+       through the world's physics: heat for every byte written, and the share of every bite that digestion loses.</p>
+  </section>
+</div>
+
+<script id="census" type="application/json">__DATA__</script>
+<script>
+(() => {
+  const RUNS = JSON.parse(document.getElementById("census").textContent).runs;
+  const play = document.getElementById("play"), range = document.getElementById("frame");
+  let timer = null;
+  const stopPlay = () => { if (timer) { clearInterval(timer); timer = null; play.textContent = "Play"; } };
+  const bandColor = y => `var(--b${y})`;
+  const fmt = (v, d = 0) => Number(v).toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
+  const signed = (v, d = 0) => (v > 0 ? "+" : v < 0 ? "−" : "") + fmt(Math.abs(v), d);
+  const pct = v => signed(100 * v, 1) + "%";
+  const when = t => new Date(t * 1000).toISOString().slice(0, 16).replace("T", " ");
+  const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+  const NS = "http://www.w3.org/2000/svg";
+  const el = (tag, attrs = {}, parent) => { const e = document.createElementNS(NS, tag);
+    for (const k in attrs) { if (k === "fill" || k === "stroke") e.style[k] = attrs[k]; else e.setAttribute(k, attrs[k]); }
+    if (parent) parent.appendChild(e); return e; };
+  const mix = (a, b, t) => `color-mix(in oklab, var(${a}) ${Math.round(100 * (1 - t))}%, var(${b}))`;
+
+  function mount(D) {
+    stopPlay();
+    for (const id of ["vitals", "layers", "map", "complexity", "money", "energy", "positions"]) document.getElementById(id).innerHTML = "";
+    const F = D.frames, B = D.bands, NB = B.length, m = D.meta;
+    if (!F.length) { document.getElementById("clock").textContent = "No census yet."; return; }
+    const W = F[0].energy_map.length;
+    const perPlace = m.per_place || 16, stake = F[0].injected / (W * NB * perPlace);
+    document.getElementById("run").textContent = `${D.run} · ${D.label} · ${W * NB * perPlace} sites on ${W} × ${NB} places · ` +
+      `${m.resolution_s === 60 ? "minute" : "second"} data ${m.from || ""}${m.until ? " to " + m.until : ""}`;
+    const hold = F.map(f => f.injected * (f.price / f.price0 - 1));
+
+    const vitals = document.getElementById("vitals"), V = {};
+    [["alive", "Living sites"], ["order", "Order"], ["net", "Soup net"], ["costs", "Fees · heat"], ["pos", "Long · short"], ["btc", "BTC price"]]
+      .forEach(([id, k]) => { const d = document.createElement("div"); d.className = "vital";
+        d.innerHTML = `<span class="k">${k}</span><span class="v"></span><span class="s"></span>`;
+        vitals.appendChild(d); V[id] = [d.querySelector(".v"), d.querySelector(".s")]; });
+
+    // map
+    const layers = [["energy", "Energy"], ["positions", "Positions"], ["alive", "Living"], ["senses", "Senses"]];
+    let layer = "energy";
+    const tabs = document.getElementById("layers");
+    layers.forEach(([id, name]) => { const b = document.createElement("button"); b.type = "button"; b.textContent = name;
+      b.dataset.layer = id; b.setAttribute("aria-pressed", id === layer);
+      b.onclick = () => { layer = id; tabs.querySelectorAll("button").forEach(x => x.setAttribute("aria-pressed", x.dataset.layer === layer)); draw(cur); };
+      tabs.appendChild(b); });
+    const map = document.getElementById("map");
+    const cw = 22, ch = 26, left = 50, right = 96, top = 18, bottom = 24;
+    const MW = left + W * cw + right, MH = top + NB * ch + bottom;
+    map.setAttribute("viewBox", `0 0 ${MW} ${MH}`); map.style.minWidth = Math.min(MW, 640) + "px";
+    const rowY = y => top + (NB - 1 - y) * ch;
+    const cells = [], rowText = [];
+    for (let y = 0; y < NB; y++) {
+      el("text", { x: left - 8, y: rowY(y) + ch / 2 + 4, "text-anchor": "end", "font-size": 11 }, map).textContent = B[y];
+      for (let x = 0; x < W; x++) { const r = el("rect", { x: left + x * cw + 1, y: rowY(y) + 1, width: cw - 2, height: ch - 2 }, map);
+        cells.push([r, el("title", {}, r), x, y]); }
+      rowText.push(el("text", { x: left + W * cw + 10, y: rowY(y) + ch / 2 + 4, "font-size": 11, style: "white-space: pre" }, map));
+    }
+    el("text", { x: left, y: 12, "font-size": 10.5 }, map).textContent = "slow";
+    el("text", { x: left, y: MH - 8, "font-size": 10.5 }, map).textContent = "fast";
+    el("text", { x: left + W * cw + 10, y: 12, "font-size": 10.5 }, map).textContent = "energy kept";
+    const regionNames = Object.keys(D.regions || {});
+    const legend = document.getElementById("legend");
+    const setLegend = (lo, hi, from, to, caption) => { legend.innerHTML = `<span>${caption}</span><span>${lo}</span>` +
+      `<span class="ramp" style="background: linear-gradient(90deg, ${from}, ${to})"></span><span>${hi}</span>`; };
+    function drawMap(f) {
+      const start = perPlace * stake;
+      for (const [r, t, x, y] of cells) {
+        let fill, tip;
+        if (layer === "energy") { const k = f.energy_map[x][y] / start - 1, s = Math.max(-1, Math.min(1, k / 0.25));
+          fill = mix("--empty", s >= 0 ? "--gain" : "--loss", Math.abs(s)); tip = `energy ${pct(k)} since the start`; }
+        else if (layer === "positions") { const v = f.exposure_map[x][y]; fill = mix("--empty", "--signal", Math.min(1, v / 0.5));
+          tip = `mean |exposure| ${fmt(v, 2)}`; }
+        else if (layer === "alive") { const n = f.alive_map[x][y]; fill = mix("--empty", "--life", n / perPlace); tip = `${n} of ${perPlace} sites keep energy`; }
+        else { const here = regionNames.filter(n => D.regions[n][x][y]); fill = mix("--empty", "--signal", regionNames.length ? here.length / regionNames.length : 0);
+          tip = here.length ? "senses here: " + here.join(", ") : "only price, volume and the clocks"; }
+        r.style.fill = fill; t.textContent = `longitude ${x}, ${B[y]}: ${tip}`;
+      }
+      for (let y = 0; y < NB; y++) rowText[y].textContent = pct(f.energy_by_band[y] / (W * perPlace * stake) - 1).padStart(7);
+      if (layer === "energy") setLegend("−25%", "+25%", "var(--loss)", "var(--gain)", "Energy since the start");
+      else if (layer === "positions") setLegend("flat", "0.5x", "var(--empty)", "var(--signal)", "Mean position size");
+      else if (layer === "alive") setLegend("none", "all", "var(--empty)", "var(--life)", "Sites keeping 10% of a stake");
+      else setLegend("none", "all 7", "var(--empty)", "var(--signal)", "Regional senses that exist here");
+    }
+
+    // charts
+    const CW = 600, CH = 210, pl = 54, pr = 12, pt = 12, pb = 26;
+    const longRun = F[F.length - 1].t - F[0].t > 60 * 86400;
+    const xs = i => pl + (CW - pl - pr) * (F.length > 1 ? i / (F.length - 1) : 0);
+    const cursors = [];
+    function niceStep(raw) { const p = Math.pow(10, Math.floor(Math.log10(raw || 1))), f = raw / p; return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 5 ? 5 : 10) * p; }
+    function axes(svg, lo, hi, fmtTick) {
+      svg.setAttribute("viewBox", `0 0 ${CW} ${CH}`);
+      const step = niceStep((hi - lo) / 4 || 1); lo = Math.floor(lo / step) * step; hi = Math.ceil(hi / step) * step;
+      const ys = v => pt + (CH - pt - pb) * (1 - (v - lo) / (hi - lo || 1));
+      for (let v = lo; v <= hi + step / 2; v += step) {
+        el("line", { x1: pl, x2: CW - pr, y1: ys(v), y2: ys(v), stroke: "var(--rule)", "stroke-width": 1 }, svg);
+        el("text", { x: pl - 6, y: ys(v) + 4, "text-anchor": "end", "font-size": 11 }, svg).textContent = fmtTick(v);
+      }
+      const n = Math.min(5, F.length);
+      for (let k = 0; k < n; k++) { const i = Math.round((F.length - 1) * (n > 1 ? k / (n - 1) : 0));
+        el("text", { x: xs(i), y: CH - 7, "text-anchor": k === 0 ? "start" : k === n - 1 ? "end" : "middle", "font-size": 11 }, svg)
+          .textContent = longRun ? when(F[i].t).slice(0, 7) : when(F[i].t).slice(5, 10); }
+      const cur = el("line", { y1: pt, y2: CH - pb, stroke: "var(--ink)", "stroke-width": 1, "stroke-dasharray": "3 3" }, svg);
+      cursors.push(cur); return ys;
+    }
+    const path = pts => pts.map((p, k) => (k ? "L" : "M") + p[0].toFixed(1) + " " + p[1].toFixed(1)).join(" ");
+    const lines = (id, series, fmtTick, keyId) => { const svg = document.getElementById(id);
+      const all = series.flatMap(s => s[1]); const ys = axes(svg, Math.min(0, ...all), Math.max(0, ...all), fmtTick);
+      series.forEach(([name, s, color, dash]) => el("path", { d: path(s.map((v, i) => [xs(i), ys(v)])), fill: "none", stroke: color,
+        "stroke-width": 1.8, "stroke-dasharray": dash || "none" }, svg));
+      svg.appendChild(cursors[cursors.length - 1]);
+      document.getElementById(keyId).innerHTML = series.map(s => `<span><i style="background:${s[2]}"></i>${s[0]}</span>`).join(""); };
+    lines("complexity", [["high-order entropy, bits per byte", F.map(f => f.matter.entropy), "var(--life)"],
+                         ["share of bytes that are instructions", F.map(f => f.matter.instructions), "var(--muted)", "4 3"]],
+          v => fmt(v, 2), "complexity-key");
+    const big = Math.max(...F.map(f => Math.abs(f.net)), ...hold.map(Math.abs)) >= 5000;
+    const money = v => big ? signed(v / 1000, 0) + "k" : signed(v, 0);
+    lines("money", [["soup net", F.map(f => f.net), "var(--gain)"],
+                    ["before fees and heat", F.map(f => f.net + f.fees + f.funding + f.heat), "var(--signal)"],
+                    ["the same money held in BTC", hold, "var(--muted)", "5 4"],
+                    ["fees", F.map(f => -f.fees), "var(--loss)"], ["heat and digestion", F.map(f => -f.heat), "var(--b6)", "2 2"]],
+          money, "money-key");
+    lines("positions", [["long", F.map(f => f.long), "var(--gain)"], ["short", F.map(f => f.short), "var(--loss)"]],
+          v => fmt(100 * v) + "%", "pos-key");
+    (function energyChart() {
+      const svg = document.getElementById("energy");
+      const ys = axes(svg, 0, Math.max(...F.map(f => f.energy)), v => fmt(v / 1e6, 1) + "M");
+      const base = F.map(() => 0);
+      for (let y = 0; y < NB; y++) { const lower = base.slice(); F.forEach((f, i) => base[i] += f.energy_by_band[y]);
+        const pts = F.map((f, i) => [xs(i), ys(base[i])]).concat(F.map((f, i) => [xs(i), ys(lower[i])]).reverse());
+        el("path", { d: path(pts) + " Z", fill: bandColor(y), "fill-opacity": 0.85, stroke: "none" }, svg); }
+      svg.appendChild(cursors[cursors.length - 1]);
+      document.getElementById("band-key").innerHTML = B.map((b, y) => `<span><i style="background:${bandColor(y)}"></i>${b}</span>`).join("");
+    })();
+
+    function programs(f) {
+      const total = W * NB * perPlace;
+      document.getElementById("programs").innerHTML = "<tr><th>Program</th><th class='num'>Copies alive</th><th class='num'>Copies itself</th></tr>" +
+        f.matter.top.map(([code, n, rep]) => `<tr><td class="code">${esc(code)}</td><td class="num">${n} (${(100 * n / total).toFixed(1)}%)</td>` +
+          `<td class="num">${Math.round(100 * rep)}%</td></tr>`).join("") +
+        `<tr><td colspan="3">${fmt(f.matter.distinct)} distinct programs among ${fmt(total)} sites</td></tr>`;
+    }
+
+    let cur = F.length - 1;
+    range.max = F.length - 1; range.value = cur;
+    function draw(i) {
+      cur = i; const f = F[i];
+      document.getElementById("clock").textContent = `${when(f.t)} UTC · census ${i + 1} of ${F.length}`;
+      const set = (id, v, s, cls = "") => { V[id][0].textContent = v; V[id][0].className = "v " + cls; V[id][1].textContent = s; };
+      const move = f.price / f.price0 - 1;
+      set("alive", fmt(f.alive), `of ${fmt(W * NB * perPlace)} keep 10% of a stake`);
+      set("order", fmt(f.matter.entropy, 2), `${fmt(f.matter.distinct)} distinct programs; ${fmt(f.copies_per_interaction, 1)} copies per meeting`);
+      set("net", signed(f.net), `holding BTC: ${signed(hold[i])}`, f.net >= 0 ? "pos" : "neg");
+      set("costs", `${fmt(f.fees)} · ${fmt(f.heat)}`, `${fmt(f.liquidations)} liquidations; ${fmt(f.taken)} bitten`);
+      set("pos", `${fmt(100 * f.long)}% · ${fmt(100 * f.short)}%`, `mean |exposure| ${fmt(f.mean_abs_exposure, 2)}`);
+      set("btc", fmt(f.price), `${pct(move)} since the start`, move >= 0 ? "pos" : "neg");
+      drawMap(f); programs(f);
+      cursors.forEach(c => { c.setAttribute("x1", xs(i)); c.setAttribute("x2", xs(i)); });
+      range.value = i;
+    }
+    range.oninput = () => { stopPlay(); draw(+range.value); };
+    play.onclick = () => { if (timer) return stopPlay(); if (cur >= F.length - 1) draw(0); play.textContent = "Pause";
+      timer = setInterval(() => { if (cur >= F.length - 1) return stopPlay(); draw(cur + 1); }, 140); };
+    draw(cur);
+  }
+
+  if (RUNS.length > 1) {
+    const worlds = document.getElementById("worlds"); worlds.hidden = false;
+    RUNS.forEach((R, k) => { const b = document.createElement("button"); b.type = "button"; b.textContent = R.label;
+      b.setAttribute("aria-pressed", k === 0);
+      b.onclick = () => { worlds.querySelectorAll("button").forEach((x, j) => x.setAttribute("aria-pressed", j === k)); mount(R); };
+      worlds.appendChild(b); });
+    document.getElementById("compare-panel").hidden = false;
+    const cols = ["World", "Days", "Living", "Order", "Net", "Before fees and heat", "Fees", "Heat", "Holding BTC"];
+    document.getElementById("compare").innerHTML = "<tr>" + cols.map((c, j) => `<th${j ? " class='num'" : ""}>${c}</th>`).join("") + "</tr>" +
+      RUNS.map(R => { const F = R.frames, f = F[F.length - 1], gross = f.net + f.fees + f.funding + f.heat, hold = f.injected * (f.price / f.price0 - 1);
+        const cell = (v, cls = "") => `<td class="num ${cls}">${v}</td>`;
+        return `<tr><td>${esc(R.label)}</td>` + cell(fmt((f.t - F[0].t) / 86400, 0)) + cell(fmt(f.alive)) + cell(fmt(f.matter.entropy, 2)) +
+          cell(signed(f.net), f.net >= 0 ? "pos" : "neg") + cell(signed(gross), gross >= 0 ? "pos" : "neg") + cell(fmt(f.fees)) + cell(fmt(f.heat)) +
+          cell(signed(hold), hold >= 0 ? "pos" : "neg") + "</tr>"; }).join("");
+  }
+  mount(RUNS[0]);
+})();
+</script>
+"""
