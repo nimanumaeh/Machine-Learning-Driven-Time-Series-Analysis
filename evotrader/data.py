@@ -28,6 +28,7 @@ import calendar
 import csv
 import datetime as dt
 import glob
+import http.client
 import io
 import json
 import os
@@ -77,13 +78,20 @@ def _get(url, cache_dir=None, timeout=60):
         if os.path.exists(path):
             with open(path, "rb") as fh:
                 return fh.read()
-    try:
-        with urllib.request.urlopen(url, timeout=timeout) as resp:
-            blob = resp.read()
-    except urllib.error.HTTPError as err:
-        if err.code == 404:
-            return None
-        raise
+    for attempt in range(5):                        # transient network faults: retry with backoff
+        try:
+            with urllib.request.urlopen(url, timeout=timeout) as resp:
+                blob = resp.read()
+            break
+        except urllib.error.HTTPError as err:
+            if err.code == 404:
+                return None
+            if attempt == 4 or err.code < 500:
+                raise
+        except (OSError, http.client.HTTPException):
+            if attempt == 4:
+                raise
+        time.sleep(2 ** (attempt + 1))
     if path:
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "wb") as fh:

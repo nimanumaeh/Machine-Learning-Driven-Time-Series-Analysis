@@ -29,6 +29,14 @@ def load(path):
 
 def status_line(c):
     day = time.strftime("%Y-%m-%d %H:%M", time.gmtime(c["t"]))
+    if "matter" in c:                                       # a soup world
+        m, k = c["matter"], c["counts"]
+        top = m["top"][0] if m["top"] else ("", 0, 0.0)
+        move = c["price"] / c["price0"] - 1 if c["price0"] else 0.0
+        return (f"{day}  alive {c['alive']:5d}/{c['sites']}  complexity {m['entropy']:5.2f}  "
+                f"distinct {m['distinct']:5d}  top x{top[1]:<4d} copies {top[2]:4.0%}  "
+                f"long {c['long']:4.0%} short {c['short']:4.0%}  taken {c['taken']:9.0f}  "
+                f"net {c['net']:+11.0f}  fees {c['fees']:9.0f}  rain {k['rain']:4d}  BTC {move:+.1%}")
     k = c["counts"]
     move = c["price"] / c["price0"] - 1 if c["price0"] else 0.0
     return (f"{day}  pop {c['population']:5d}  bands {c['by_band']}  gen {c['max_generation']:3d}  "

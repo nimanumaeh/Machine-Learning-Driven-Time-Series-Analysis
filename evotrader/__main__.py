@@ -9,6 +9,7 @@
   report     summarise a run
   seconds    build/update the 1-second store from every perpetual trade
   planet     drop very many organisms onto a planet made of 1-second data
+  soup       a planet of living matter: nothing designed, BTC as the sun
   view       turn a planet run's census into one self-contained HTML page
 """
 
@@ -27,6 +28,7 @@ from .brains import NetBrain
 from .config import Config
 from .life import Life
 from .planet import Planet
+from .soup import Soup
 from .mind import RRBrain
 from .selfmade import SelfMadeBrain
 from .report import full_report
@@ -219,6 +221,47 @@ def cmd_planet(args):
     planet_run.run_planet(planet, life, rows, args.run, census_every_s=args.census_every)
 
 
+def cmd_soup(args):
+    ckpt = os.path.join(args.run, "planet.pkl")
+    meta_path = os.path.join(args.run, "meta.json")
+    if os.path.exists(ckpt):
+        if not args.resume:
+            sys.exit(f"{args.run} already holds a world: add --resume, or choose another --run")
+        planet, soup = planet_run.load(ckpt)
+        with open(meta_path) as f:
+            meta = json.load(f)
+        if args.synthetic and meta["source"] == "synthetic":
+            meta["days"] = args.synthetic
+            with open(meta_path, "w") as f:
+                json.dump(meta, f, indent=1)
+        print(f"resuming {args.run} at {_when(planet.t)} UTC")
+    else:
+        cfg = _config(args)
+        planet = Planet(width=args.width, seed=args.seed)
+        matter = np.load(args.matter) if args.matter else None
+        soup = Soup(cfg, planet, per_place=args.per_place, seed=args.seed,
+                    interactions=args.interactions, noise=args.noise, matter=matter, floor=args.rain)
+        meta = {"kind": "soup", "source": "synthetic" if args.synthetic else "seconds",
+                "days": args.synthetic, "null": args.null, "market_seed": args.market_seed,
+                "store": args.store, "symbol": args.symbol, "from": args.start, "until": args.until,
+                "width": args.width, "per_place": args.per_place, "interactions": args.interactions,
+                "noise": args.noise, "matter": args.matter, "rain": args.rain, "seed": args.seed,
+                "config": cfg.to_dict(),
+                "regions": {k: v.astype(int).tolist() for k, v in planet.regions.items()}}
+        os.makedirs(args.run, exist_ok=True)
+        with open(meta_path, "w") as f:
+            json.dump(meta, f, indent=1)
+    if meta["source"] == "synthetic":
+        market = SyntheticMarket(planted=not meta["null"], seed=meta["market_seed"], step_s=1)
+        rows = market.stream(int(meta["days"] * 86_400))
+    else:
+        rows = data_seconds.iter_seconds(meta["store"], meta["symbol"], _ms(meta["from"]),
+                                         _ms(meta["until"]))
+    print(f"soup of {soup.S} sites x {soup.soup.shape[1]} bytes on a planet {planet.X} x {planet.Y}; "
+          f"{soup.E} interactions a second (Ctrl-C saves; --resume carries on)")
+    planet_run.run_planet(planet, soup, rows, args.run, census_every_s=args.census_every)
+
+
 def cmd_view(args):
     from .viewer import write_viewer
     out = args.out or os.path.join(args.run[0], "planet.html")
@@ -326,6 +369,33 @@ def main(argv=None):
     g.add_argument("--seed", type=int, default=0)
     p.set_defaults(fn=cmd_planet)
 
+    p = sub.add_parser("soup", help="a planet of living matter: nothing designed")
+    store_args(p, default_store="data/seconds")
+    p.add_argument("--run", default="runs/soup")
+    p.add_argument("--resume", action="store_true")
+    p.add_argument("--from", dest="start", help="first day of the 1-second store")
+    p.add_argument("--until", help="stop before this day")
+    p.add_argument("--synthetic", type=float, metavar="DAYS")
+    p.add_argument("--null", action="store_true")
+    p.add_argument("--market-seed", type=int, default=0)
+    p.add_argument("--width", type=int, default=32, help="longitudes (latitudes are the 8 timescales)")
+    p.add_argument("--per-place", type=int, default=16, help="sites of matter at each place")
+    p.add_argument("--interactions", type=int, default=1024, help="interactions per second")
+    p.add_argument("--noise", type=float, default=0.00024,
+                   help="chance a byte flips, per epoch (as many interactions as sites)")
+    p.add_argument("--matter", help="start from this matter (.npy of sites x bytes) instead of random")
+    p.add_argument("--rain", type=float, default=0.0,
+                   help="when the planet's energy falls below this share of the start, stakes fall "
+                        "on dead sites (money put in); 0, the default, means energy only comes from BTC")
+    p.add_argument("--census-every", type=int, default=1800)
+    g = p.add_argument_group("environment (defaults in evotrader/config.py)")
+    g.add_argument("--taker-fee", dest="taker_fee", type=float)
+    g.add_argument("--half-spread", dest="half_spread", type=float)
+    g.add_argument("--max-leverage", dest="max_leverage", type=int)
+    g.add_argument("--initial-capital", dest="initial_capital", type=float)
+    g.add_argument("--seed", type=int, default=0)
+    p.set_defaults(fn=cmd_soup)
+
     p = sub.add_parser("view", help="one HTML page to watch planet runs")
     p.add_argument("--run", nargs="+", default=["runs/planet"],
                    help="one run, or several to compare side by side")
@@ -334,8 +404,8 @@ def main(argv=None):
     p.set_defaults(fn=cmd_view)
 
     args = ap.parse_args(argv)
-    if args.cmd == "planet" and not args.synthetic and not args.resume and not args.start:
-        ap.error("planet: give --synthetic DAYS, or --from DAY for the 1-second store")
+    if args.cmd in ("planet", "soup") and not args.synthetic and not args.resume and not args.start:
+        ap.error(f"{args.cmd}: give --synthetic DAYS, or --from DAY for the 1-second store")
     args.fn(args)
 
 

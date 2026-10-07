@@ -59,7 +59,7 @@ def page_data(run_dir, max_frames=400):
                                             "higher_order", "culture")},
         "run": os.path.basename(os.path.normpath(run_dir)),
         "label": label(meta),
-        "bands": [_label(T) for T in TAU],
+        "bands": [_label(T) for T in meta.get("taus", TAU)],
         "regions": geography(run_dir, meta),
         "frames": [{k: _finite(f.get(k)) for k in KEEP} for f in frames],
     }

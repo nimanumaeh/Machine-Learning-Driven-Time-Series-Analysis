@@ -31,7 +31,7 @@ import numpy as np
 
 from .data import C
 from .exchange import Accounts
-from .planet import CULTURE, GROWTH, N_CH, N_OBS, TAU, _normalize
+from .planet import CULTURE, GROWTH, N_CH, N_OBS, _normalize
 from .selfmade import ACTIONS, LAGS, MMR, N_ACT, N_REC, NORMS, OPS, RECEPTORS, ZERO
 
 K = 6                                         # organs per organism
@@ -140,7 +140,7 @@ class Life:
         self._senses = None
         # moving is a slow affair in planetary time: a 1-second organism gets as many
         # chances to move per hour as a 10-minute one, not 600 times as many
-        self.roam = np.minimum(1.0, TAU / 600.0)
+        self.roam = np.minimum(1.0, planet.taus / 600.0)
         self.t = 0.0
         self.price = self.mark = self.price0 = np.nan
 
@@ -286,7 +286,7 @@ class Life:
             self.grip[live] += (np.clip(gain, -5, 5) - self.grip[live]) / 32
             self.turbulence[live] += (np.abs(self.grip[live] - old) * 32 - self.turbulence[live]) / 32
             self.drift[live] += ((self.grip[live] - old) - self.drift[live]) / 64
-            self._mark_growth(self.x[live], y, yc * 86400.0 / ((tick - 1 - m0) * TAU[y]))
+            self._mark_growth(self.x[live], y, yc * 86400.0 / ((tick - 1 - m0) * self.planet.taus[y]))
             self._rls(live, self.q_phi[live, h], Y)
             self.q_head[live] = (h + 1) % Q
             self.q_len[live] -= 1
@@ -671,7 +671,7 @@ class Life:
     def body_state(self, idx):
         x = self.exposure(idx)
         return np.stack([np.ones(len(idx)), np.tanh(x / 3), np.tanh(np.abs(x) / 3),
-                         np.log(self.lev[idx]) / 5, self.y[idx] / len(TAU),
+                         np.log(self.lev[idx]) / 5, self.y[idx] / self.planet.Y,
                          np.clip(self.grip[idx], -1, 1)], 1)
 
     # ------------------------------------------------------------- ecology
@@ -687,7 +687,7 @@ class Life:
         ratio = self.equity() / self.ref
         for i in np.nonzero(self.alive & (ratio < cfg.death_ratio))[0]:
             self._die(i, "died")
-        min_age = np.maximum(3600.0, 50.0 * TAU[self.y])
+        min_age = np.maximum(3600.0, 50.0 * self.planet.taus[self.y])
         ready = np.nonzero(self.alive & (ratio >= cfg.repro_ratio) & (self.t - self.last_split >= min_age))[0]
         dens, cap = self._density(), pl.capacity()
         for i in ready[np.argsort(-ratio[ready])]:

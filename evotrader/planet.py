@@ -24,7 +24,8 @@ import numpy as np
 from .data import C, EIGHT_HOURS
 from .selfmade import LAGS, NORMS, N_REC, OPS, RECEPTORS, ZERO
 
-TAU = np.array([1, 5, 30, 120, 600, 3600, 21600, 86400])
+TAU = np.array([1, 5, 30, 120, 600, 3600, 21600, 86400])          # on 1-second rows
+MINUTE_TAU = np.array([60, 300, 900, 3600, 14400, 86400, 345600, 1209600])   # on minute rows
 REGIONS = {
     "flow": ("taker_buy",),
     "premium": ("premium",),
@@ -51,9 +52,11 @@ def _smooth_field(rng, n, waves=4):
 
 class Planet:
     def __init__(self, width=48, seed=0, history=512, base_capacity=16, obs_decay=0.005,
-                 marker_memory=256):
+                 marker_memory=256, taus=None, step_s=1):
         rng = np.random.default_rng(seed)
-        self.X, self.Y, self.H = width, len(TAU), history
+        self.taus = np.array(TAU if taus is None else taus, np.int64)
+        self.step_s = step_s                                    # seconds each row covers
+        self.X, self.Y, self.H = width, len(self.taus), history
         self.base_capacity = base_capacity
         self.obs_decay, self.marker_memory = obs_decay, marker_memory
         self.avail = np.ones((self.X, self.Y, N_REC + 1), bool)
@@ -87,11 +90,17 @@ class Planet:
         self.growth = np.zeros((self.X, Y))
         self.crowding = np.zeros((self.X, Y))
         self.t = 0.0
+        # generic transduction for matter that reads the weather (soup.py): each stream's
+        # level and its change as z-scores, one byte each (128 = ordinary or unknown)
+        self.sense_bytes = np.full((Y, 2 * N_REC), 128, np.uint8)
+        self.sense_stats = np.zeros((Y, 2, N_REC, 2))           # level, change: EW mean, var
+        self.sense_prev = np.full((Y, N_REC), np.nan)
+        self.sense_n = np.zeros(Y, np.int64)
 
     # ----------------------------------------------------------------- time
     def step(self, row):
         """Take one 1-second row; return the bands whose tick just completed."""
-        self.t = (row[C["open_time"]] + 1000) / 1000.0
+        self.t = (row[C["open_time"]] + 1000 * self.step_s) / 1000.0
         o, h, l, c = row[C["open"]], row[C["high"]], row[C["low"]], row[C["close"]]
         new = np.isnan(self.bar[:, 0])
         self.bar[new, 0] = o
@@ -110,7 +119,7 @@ class Planet:
             self.funding_sum += f
             self.funding_mark += f * row[C["mark_close"]] if row[C["mark_close"]] > 0 else f * c
         self.last = row
-        done = np.nonzero(np.round(self.t) % TAU == 0)[0]
+        done = np.nonzero(np.round(self.t) % self.taus == 0)[0]
         for y in done:
             self._close_bar(y)
         return done
@@ -156,10 +165,29 @@ class Planet:
             self.water[y] = float(np.clip(self.vol_fast[y] / self.vol_slow[y], 0.5, 2.0))
         self.bar[y] = np.nan
         self.funding_sum[y] = self.funding_mark[y] = 0.0
+        self._transduce(y, rec[:N_REC])
         # what is built wears away and traces fade, in the band's own time
         self.obs_integrity[:, y] = np.maximum(self.obs_integrity[:, y] - self.obs_decay, 0.0)
         self.growth[:, y] *= 1.0 - 1.0 / self.marker_memory
         self._run_observatories(y)
+
+    def _transduce(self, y, level):
+        """How this tick of the weather feels, one byte per stream level and change."""
+        change = level - self.sense_prev[y]
+        self.sense_prev[y] = level
+        z = np.full((2, N_REC), np.nan)
+        for k, (x, rate) in enumerate(((level, 1 / 1024), (change, 1 / 256))):
+            mean, var = self.sense_stats[y, k, :, 0], self.sense_stats[y, k, :, 1]
+            ok = np.isfinite(x)
+            first = ok & (var == 0) & (mean == 0)
+            d = np.where(ok, x - mean, 0.0)
+            mean[:] = np.where(first, np.where(ok, x, 0.0), mean + rate * d)
+            var[:] = np.where(first, 0.0, (1 - rate) * (var + rate * d * d))
+            with np.errstate(invalid="ignore", divide="ignore"):
+                z[k] = np.where(ok & (var > 0), (x - mean) / np.sqrt(var), np.nan)
+        self.sense_n[y] += 1
+        b = np.round(128 + 32 * np.clip(np.nan_to_num(z, nan=0.0), -4, 3.97))
+        self.sense_bytes[y] = b.reshape(-1).astype(np.uint8)
 
     def capacity(self):
         """How many organisms each place (x, y) can hold now."""
@@ -236,5 +264,5 @@ def _normalize(x, change, op, k, tau, state):
             np.stack([ema, mean, var, cnt], -1))
 
 
-__all__ = ["Planet", "TAU", "N_CH", "N_OBS", "CULTURE", "GROWTH", "CROWD", "evaluate",
+__all__ = ["Planet", "TAU", "MINUTE_TAU", "N_CH", "N_OBS", "CULTURE", "GROWTH", "CROWD", "evaluate",
            "_normalize", "OPS"]
