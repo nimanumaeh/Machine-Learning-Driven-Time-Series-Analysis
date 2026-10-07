@@ -195,12 +195,14 @@ def cmd_planet(args):
         cfg = _config(args)
         planet = Planet(width=args.width, seed=args.seed, base_capacity=args.place_capacity)
         life = Life(cfg, planet, capacity=args.organisms, seed=args.seed,
-                    min_population=args.population)
+                    min_population=args.population, higher_order=not args.no_higher_order,
+                    culture=not args.no_culture)
         meta = {"source": "synthetic" if args.synthetic else "seconds", "days": args.synthetic,
                 "null": args.null, "market_seed": args.market_seed, "store": args.store,
                 "symbol": args.symbol, "from": args.start, "until": args.until,
                 "width": args.width, "place_capacity": args.place_capacity,
                 "organisms": args.organisms, "population": args.population, "seed": args.seed,
+                "higher_order": not args.no_higher_order, "culture": not args.no_culture,
                 "config": cfg.to_dict(),
                 "regions": {k: v.astype(int).tolist() for k, v in planet.regions.items()}}
         os.makedirs(args.run, exist_ok=True)
@@ -309,6 +311,10 @@ def main(argv=None):
                    help="below this, newcomers arrive from space (panspermia)")
     p.add_argument("--organisms", type=int, default=8192, help="most organisms that can ever be alive")
     p.add_argument("--census-every", type=int, default=1800, help="simulated seconds between censuses")
+    p.add_argument("--no-higher-order", action="store_true",
+                   help="ablation: the gate never opens (habits and blind generate-and-test only)")
+    p.add_argument("--no-culture", action="store_true",
+                   help="ablation: no observatories or markers to build, perceive or follow")
     g = p.add_argument_group("environment (defaults in evotrader/config.py)")
     g.add_argument("--taker-fee", dest="taker_fee", type=float)
     g.add_argument("--half-spread", dest="half_spread", type=float)

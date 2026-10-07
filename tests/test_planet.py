@@ -406,3 +406,30 @@ def test_planet_runs_resume_from_disk_and_render(tmp_path):
     write_viewer(run, str(out), bare=True, max_frames=3)
     bare = out.read_text()
     assert bare.startswith("<title>") and "<body>" not in bare
+
+
+def test_ablations_switch_off_the_higher_order_and_culture():
+    rows = seconds(1500, seed=5)
+    pl = Planet(width=6, seed=0)
+    life = Life(Config(), pl, capacity=256, seed=0, min_population=40, higher_order=False)
+    live(pl, life, rows)
+    assert life.counts["episodes"] == 0 and life.counts["migrated"] == 0
+    assert life.counts["organs_made"] > 0                    # habits still remake perception
+    pl = Planet(width=6, seed=0)
+    life = Life(Config(), pl, capacity=256, seed=0, min_population=40, culture=False)
+    live(pl, life, rows)
+    alive = life.alive
+    assert life.counts["episodes"] > 0 and life.counts["built"] == 0
+    assert (life.prog[alive][..., :2] <= ZERO).all()          # nobody perceives culture
+    old = pickle.loads(pickle.dumps(life))
+    del old.__dict__["higher_order"], old.__dict__["culture"]  # a world saved before the switches
+    assert old.higher_order and old.culture
+
+
+def test_with_nothing_learned_nobody_trades_even_when_conscious(monkeypatch):
+    monkeypatch.setattr(Life, "_shrunk", lambda self, idx: np.zeros((len(idx),) + self.W.shape[1:]))
+    pl, life = new_life(n=40)
+    live(pl, life, seconds(1200, seed=6))
+    assert life.counts["episodes"] > 0                     # minds still reorganize...
+    assert life.acct.trades.sum() == 0                     # ...but nobody pays to move at random
+    assert life.acct.fees.sum() == 0

@@ -42,7 +42,8 @@ def page_data(run_dir, max_frames=400):
         meta = json.load(f)
     return {
         "meta": {k: meta.get(k) for k in ("source", "days", "null", "market_seed", "from", "until",
-                                            "width", "place_capacity", "population", "seed")},
+                                            "width", "place_capacity", "population", "seed",
+                                            "higher_order", "culture")},
         "run": os.path.basename(os.path.normpath(run_dir)),
         "bands": [_label(T) for T in TAU],
         "regions": geography(run_dir, meta),
@@ -249,7 +250,7 @@ th.num { text-align: right; }
   const src = m.source === "synthetic"
     ? `synthetic market, ${m.null ? "nothing planted (null world)" : "planted crowding effect"}, seed ${m.market_seed}`
     : `BTCUSDT 1-second store${m.from ? ", from " + m.from : ""}${m.until ? " until " + m.until : ""}`;
-  document.getElementById("run").textContent = `${D.run} · ${W} longitudes × ${NB} latitudes · ${src}`;
+  document.getElementById("run").textContent = `${D.run} · ${W} longitudes × ${NB} latitudes · ${src}${m.higher_order === false ? " · higher-order mode off" : ""}${m.culture === false ? " · culture off" : ""}`;
   document.getElementById("source-note").textContent = m.source === "synthetic"
     ? "This run lives on a synthetic market made for testing the machinery. Nothing learned here transfers to BTC."
     : "This run lives on the real BTCUSDT market, second by second, with play money.";

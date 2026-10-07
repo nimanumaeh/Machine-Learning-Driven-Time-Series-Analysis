@@ -20,8 +20,11 @@ Dials      explore-exploit and efficiency-resiliency, each the balance of two
 Modes      habitual (every tick: act on values, keep organs) and higher-order
            (opened by a learned gate when surprise, stagnation, conflict or
            novelty are high): rebuild organs deliberately, break frames,
-           migrate, build an observatory, act exploratively. The gate learns
-           from whether its episodes improved grip.
+           migrate, build an observatory. Both modes act on the organism's
+           values: it learns what all nine moves would have done on every tick,
+           so a random move would teach it nothing and only pay fees. The gate
+           is an opponent process: every episode costs a little (it raises the
+           bar), and episodes that improved grip lower it.
 """
 
 import numpy as np
@@ -41,6 +44,7 @@ FIELDS = (N_CH, N_CH, len(OPS), len(LAGS), len(NORMS))
 OFFSETS = np.cumsum((0,) + FIELDS[:-1])
 D_KEY = 8                                     # width of anticipation's queries and keys
 YOUTH = 64                                    # band ticks a new organ is spared for being unsalient
+GATE_COST = 0.01                              # what each conscious episode raises the gate's bar by
 
 
 def describe(p):
@@ -55,7 +59,13 @@ def describe(p):
 
 
 class Life:
-    def __init__(self, cfg, planet, capacity=8192, seed=0, min_population=None):
+    # ablations (class defaults, so worlds saved before they existed load unchanged)
+    higher_order = True        # False: the gate never opens; habits and blind generate-and-test only
+    culture = True             # False: no observatories, no markers to perceive or follow
+
+    def __init__(self, cfg, planet, capacity=8192, seed=0, min_population=None,
+                 higher_order=True, culture=True):
+        self.higher_order, self.culture = higher_order, culture
         self.cfg, self.planet = cfg, planet
         self.N = N = capacity
         self.rng = np.random.default_rng(seed)
@@ -201,15 +211,7 @@ class Life:
         conscious = self._gate(idx, tick)
         act = np.argmax(score, axis=1)
         best = score[np.arange(len(idx)), act]
-        if conscious.any():                                  # deliberate, exploratory choice
-            c = np.nonzero(conscious)[0]
-            temp = (0.2 + self.explore[idx[c]]) * sd[c]
-            p = np.exp((score[c] - best[c, None]) / temp[:, None])
-            p /= p.sum(1, keepdims=True)
-            u = self.rng.random(len(c))[:, None]
-            act[c] = np.minimum((np.cumsum(p, 1) < u).sum(1), N_ACT - 1)
-            best[c] = score[c, act[c]]
-        keep = (stay >= best) & ~conscious
+        keep = stay >= best                                  # move only when it is worth its cost
         chosen = np.where(keep, _nearest(lam, xmax), act)
         move = ~keep
         self.pending[idx[move]] = x_all[move, act[move]]
@@ -454,8 +456,9 @@ class Life:
             self.gate_theta[d] += np.where(paid, -0.05, 0.05)
             self.episode_due[d] = -1
         self.refractory[idx] = np.maximum(self.refractory[idx] - 1, 0)
-        open_ = (g > 0.5) & (self.refractory[idx] == 0) & (self.nupd[idx] > 16)
+        open_ = (g > 0.5) & (self.refractory[idx] == 0) & (self.nupd[idx] > 16) & self.higher_order
         o = idx[open_]
+        self.gate_theta[o] += GATE_COST                     # consciousness is costly
         self.refractory[o] = 8
         self.episode_grip[o] = self.grip[o]
         self.episode_due[o] = tick + 16
@@ -494,7 +497,7 @@ class Life:
         cells = [c for c in cells if dens[c] < cap[c]]
         if not cells:
             return
-        if rng.random() < self.explore[i]:
+        if rng.random() < self.explore[i] or not self.culture:   # without markers, a blind move
             cx, cy = cells[rng.integers(len(cells))]
         else:
             g = np.array([pl.growth[c] for c in cells])
@@ -519,7 +522,7 @@ class Life:
         aimed at a stream chosen at random, which the place may not sense itself."""
         rng, pl = self.rng, self.planet
         top = int(np.argmax(self.salience[i]))
-        if self.salience[i, top] <= 1.5 / K:
+        if not self.culture or self.salience[i, top] <= 1.5 / K:
             return
         prog = self.prog[i, top].copy()
         if rng.random() < 0.3:
@@ -536,7 +539,7 @@ class Life:
         """Every channel an organ can read at each place, padded (X, Y, S), and how many."""
         if self._senses is None:                           # geography is fixed at the planet's birth
             pl = self.planet
-            culture = ZERO + 1 + np.arange(CULTURE)
+            culture = ZERO + 1 + np.arange(CULTURE if self.culture else 0)
             lists = [[np.concatenate([np.nonzero(pl.avail[x, y, :ZERO])[0], culture])
                       for y in range(pl.Y)] for x in range(pl.X)]
             table = np.full((pl.X, pl.Y, max(len(c) for r in lists for c in r)), ZERO, np.int64)
