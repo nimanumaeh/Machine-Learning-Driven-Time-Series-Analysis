@@ -8,6 +8,7 @@ money split into children. Nothing here touches a real account.
 - `docs/relevance-realization-design.md`: the theory and the math of the relevance-realizing agents.
 - `docs/planet.md`: the planet made of 1-second BTC data, and the smallest Vervaekean organisms that live on it.
 - `docs/soup.md`: a soup of living matter on the same planet, where nothing is designed and BTC is the sun.
+- `docs/gpu.md`: the soup on a GPU, and on cloud GPUs through Modal.
 
 ## Layers
 
@@ -25,6 +26,8 @@ money split into children. Nothing here touches a real account.
 | Life | `life.py` | very many minimal organisms as array columns: an exact account as body, self-made organs kept alive by salience, two opponent dials, a learned gate into a higher-order mode that rebuilds organs, migrates and builds |
 | Watching | `planet_run.py`, `viewer.py` | censuses of life over time, checkpoints, and one self-contained HTML page per run |
 | Soup | `soup.py` | matter, space, time, energy and a few physical laws (Kleiber, Landauer, digestion); replication, death, predation and trading are left to emerge |
+| Soup physics | `physics.py`, `weather.py` | the soup's laws written once as scalar code, compiled for the CPU and for CUDA; the weather matter feels, compiled for chunks of rows |
+| GPU | `gpu.py`, `../modal_app.py` | the same world on a CUDA GPU, every site at once; cloud GPUs through Modal (`docs/gpu.md`) |
 | Transplant | `transplant.py` | lift any matter out of a soup and run it on unseen data: its positions are its strategy |
 
 ## Use
@@ -58,7 +61,9 @@ The soup lives on the same planet, on 1-second or minute data (needs `pip instal
 ```bash
 python -m evotrader soup --minutes --from 2021-01-01 --until 2025-01-01 --run runs/soup \
     --heat 0.0001 --digestion 0.8              # Landauer heat, lossy predation
+python -m evotrader soup ... --device gpu      # the same world on a CUDA GPU (pip install "numba-cuda[cu12]")
 python experiments/soup_emergence.py           # does life start from random bytes, with no market?
+modal run modal_app.py::selftest               # on cloud GPUs, from your computer: docs/gpu.md
 ```
 
 - `--width` sets the number of longitudes; the 8 latitudes are the timescales.

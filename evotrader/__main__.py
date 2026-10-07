@@ -252,7 +252,7 @@ def cmd_soup(args):
         soup = Soup(cfg, planet, per_place=args.per_place, seed=args.seed,
                     interactions=args.interactions, noise=args.noise, matter=matter,
                     max_exposure=args.max_exposure, heat=args.heat, digestion=args.digestion,
-                    quantum=args.bite)
+                    quantum=args.bite, layout=args.layout)
         store = args.store if args.store != "data/seconds" or not args.minutes else "data/market"
         meta = {"kind": "soup", "physics": PHYSICS, "source": "synthetic" if args.synthetic else "store",
                 "resolution_s": step_s, "taus": planet.taus.tolist(),
@@ -261,7 +261,7 @@ def cmd_soup(args):
                 "days": args.synthetic, "null": args.null, "market_seed": args.market_seed,
                 "store": store, "symbol": args.symbol, "from": args.start, "until": args.until,
                 "width": args.width, "per_place": args.per_place, "interactions": args.interactions,
-                "noise": args.noise, "matter": args.matter, "seed": args.seed,
+                "noise": args.noise, "matter": args.matter, "layout": args.layout, "seed": args.seed,
                 "config": cfg.to_dict(),
                 "regions": {k: v.astype(int).tolist() for k, v in planet.regions.items()}}
         os.makedirs(args.run, exist_ok=True)
@@ -288,6 +288,7 @@ def cmd_soup(args):
     took = time.time() - tic
     print(f"{n} ticks in {took:.0f}s ({1000 * took / max(n, 1):.3f} ms a tick); "
           + ("the data ran out" if finished else "stopped early: --resume carries on"))
+    return finished
 
 
 def cmd_view(args):
@@ -416,7 +417,11 @@ def main(argv=None):
                         "when richer, fewer when poorer)")
     p.add_argument("--noise", type=float, default=0.00024,
                    help="chance a byte flips, per epoch (as many interactions as sites)")
-    p.add_argument("--matter", help="start from this matter (.npy of sites x bytes) instead of random")
+    p.add_argument("--matter", help="start from this matter (.npy of sites x bytes, tiled to the planet) "
+                                    "instead of random")
+    p.add_argument("--layout", choices=("symmetric", "bff"), default="symmetric",
+                   help="which byte means which instruction: symmetric (no lean to long or short) or the "
+                        "ASCII bytes of BFF (to seed with matter from experiments/soup_emergence.py)")
     p.add_argument("--minutes", action="store_true",
                    help="live on the minute store (2017 on): latitudes from 1 minute to 2 weeks")
     p.add_argument("--max-exposure", type=float, default=1.0,
@@ -451,8 +456,9 @@ def main(argv=None):
     args = ap.parse_args(argv)
     if args.cmd in ("planet", "soup") and not args.synthetic and not args.resume and not args.start:
         ap.error(f"{args.cmd}: give --synthetic DAYS, or --from DAY for the 1-second store")
-    args.fn(args)
+    return args.fn(args)
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    main()
+    sys.exit(0)

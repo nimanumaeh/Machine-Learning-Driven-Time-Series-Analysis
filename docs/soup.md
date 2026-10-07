@@ -2,7 +2,14 @@
 
 The planet (`docs/planet.md`) holds organisms we designed: their organs, values, dials and modes are ours. The soup goes further. It holds no organisms at all, only matter, space, time, energy and a few physical laws. Replication, death, mating, predation, cooperation, size limits and trading are not written anywhere; whatever of them appears does so because the laws allow it. BTC is the sun.
 
-Code: `evotrader/soup.py` (physics and the world), `evotrader/transplant.py` (reading organisms back as strategies). Run: `python -m evotrader soup --minutes --from 2021-01-01 --until 2025-01-01 --run runs/soup`.
+Code:
+- `evotrader/physics.py`: the laws, written once and compiled for the CPU and for CUDA.
+- `evotrader/soup.py`: the world.
+- `evotrader/weather.py`: what matter senses.
+- `evotrader/gpu.py`: the world on a GPU.
+- `evotrader/transplant.py`: reading organisms back as strategies.
+
+Run: `python -m evotrader soup --minutes --from 2021-01-01 --until 2025-01-01 --run runs/soup` (add `--device gpu` on a CUDA machine; on cloud GPUs see `docs/gpu.md`).
 
 ---
 
@@ -15,10 +22,11 @@ Code: `evotrader/soup.py` (physics and the world), `evotrader/transplant.py` (re
 | **Chemistry** | Two neighboring tapes are joined and run as one program for at most 8,192 steps. Ten instructions move two heads, change bytes, copy between heads, and loop (BFF, Agüera y Arcas et al. 2024). Every other byte is inert. | Copying exists; replication does not. In BFF, self-replicators arise from random matter with no fitness function. |
 | **Senses and acts** | Four more instructions: `S` reads a market stream, `E` reads the site's own energy or position, `A` sets its exposure to BTC, `T` moves a bite of energy between the two sites. Each acts for the site whose half of the tape it sits in, and never takes itself as its own argument. | The market enters only through these. A trading strategy is whatever sequence of these the matter happens to run. |
 | **Energy** | Each site holds one exact BTCUSDT perpetual account (fees, spread, funding, liquidation). Energy enters and leaves only through the market, plus the losses below. Orders fill at the open after the site's latitude ticks. | The money of the world is real trading money, so survivors' wealth is market wealth. |
-| **Time (Kleiber)** | A site starts interactions at a rate proportional to its energy^0.75. | Energy buys activity, with diminishing returns for the very large (Kleiber's law of metabolic scaling). |
+| **Time (Kleiber)** | Each tick a site wakes with a chance proportional to (its energy / its starting stake)^0.75. About `--interactions` sites wake a tick while every site holds its stake; more in a richer world, fewer in a poorer one. | Energy buys activity, with diminishing returns for the very large (Kleiber's law of metabolic scaling). A world that loses energy slows down. |
+| **Meeting** | A woken site claims a random neighbor. A site takes part in at most one interaction a tick: where claims collide, the highest random claim on both sites wins. | Crowding, not a quota, decides who meets whom. No site can act in two places at once, so even the richest site has a speed limit. This is also what lets every pair run at the same time on a GPU. |
 | **Heat (Landauer)** | Every irreversible byte write costs the writing site a little energy. A site that cannot pay cannot write. | Information and energy trade one for one (Landauer; Bennett 2003; the Maxwell's demon argument of Linson et al. 2018). Thinking, copying and growing all cost; matter without energy is inert, which is what death is here. What is too big for the information it harvests runs too hot and fades: a whale limit with no cap written anywhere. |
 | **Bites and digestion** | One `T` moves at most one small quantum, and only part of it arrives (80% by default). | Predation must be organized (draining a neighbor takes a loop, and time) and is never lossless, as in every food web (Lindeman's trophic efficiency). |
-| **Noise** | Bytes flip at random, rarely. | Variation. |
+| **Noise** | Each tick a few bytes flip at random, on average `--noise` per byte per `--interactions` sites' worth of meetings. | Variation. |
 
 **Conventions chosen so that the physics leans nowhere.** Each was found by running random matter on real data and asking why it leaned one way:
 - Every byte the market reads or writes is signed, and 0 means nothing. The zero that ends every loop is stillness, not a position.
@@ -73,11 +81,43 @@ The world's energy must come from BTC in a way that survives being reverse engin
 
 Why trading P&L is the right sun at all: a Kelly bettor's growth rate equals the mutual information between its signal and the outcome (Kelly 1956). Energy from trading is information about BTC converted to energy, the same equivalence that grounds Landauer heat.
 
-## 6. Open questions
+## 6. Abiogenesis: life from random bytes
 
-- **Abiogenesis.** No replicator has yet appeared from random matter at our scale (about 10⁹ interactions on 16,384 sites with the market instructions). Under the exact BFF chemistry the soup is far more active (high-order entropy about 0.6 against 0.05), so the market instructions, which overwrite bytes, seem to inhibit the origin of life. If life will not start on its own within our compute, we can seed the first copier (as Tierra did) and leave everything after it to evolution.
+Matter alone, with no market and nothing rewarding anything (`experiments/soup_emergence.py`, the exact BFF chemistry). The run: 16,384 random tapes on a 2,048 × 8 lattice, seed 2.
+
+For 48,000 epochs high-order entropy hovered near 0.6 and the most common tape had at most a handful of copies. Then, within 2,000 epochs (on one CPU core, after 39 minutes), self-replicators took over:
+
+| Epoch | High-order entropy | Most common tape | It copies itself |
+|---|---|---|---|
+| 48,000 | 0.57 | ×1 | 17% |
+| 49,000 | 0.86 | ×77 | 100% |
+| 50,000 | 1.08 | ×31 (a family of variants) | 69% |
+
+The family that took over is a palindrome (`·` is inert):
+
+`·[<·····,······}···············]]···············}······,·····<[·`
+
+What it does:
+- Sitting in the first of two joined tapes, it loops: head 0 walks backwards from the end of the neighbor's tape, head 1 forwards through its own, and each byte is copied across. The neighbor ends up holding its exact reverse, and the original stays intact.
+- Its instructions read the same in both directions (only its inert bytes do not), so the reversed copy is the same program. When the copy copies in turn, it reverses back.
+- Sitting in the second tape, it stays intact.
+
+When the run was saved, just after the transition, about 1% of all tapes were near copies (at least 90% of bytes equal to the most common one). Nobody wrote it.
+
+The same search with the market instructions included found nothing in about 10⁹ interactions. S and E overwrite bytes with readings, which seems to inhibit the origin of life. Life can still reach the market: replicators born in matter alone can seed a market soup (`--matter`, `--layout bff`), and selection can take them from there.
+
+This run used soup physics 1's way of pairing (every tape starts one interaction an epoch, one after another). Physics 2 pairs sites by claims, all at once, and can run the same search at the scale of the original paper (2^17 tapes) on a GPU.
+
+## 7. Open questions
+
+- **Life meets the market.** Seed a market soup with the replicators above and see whether selection turns copying into trading.
 - **Calibrating heat.** Heat sets how much complexity can pay for itself. The gentle (no heat) and Landauer worlds are run side by side to see what it changes.
-- **Compute.** About 20 minutes per simulated year on one core at 4,096 sites and minute data; 1-second data costs about 60 times more per simulated day.
+- **Compute.** With physics 2 the CPU needs about 0.6 ms a tick at 4,096 sites (21 minutes for 4 years of minutes); 1-second data has 60 times more ticks. A GPU runs every site at once (`docs/gpu.md`).
+
+## 8. Versions of the laws
+
+- **Physics 1** (until October 2026): each second a fixed number of initiators were drawn in proportion to energy^0.75 and ran one after another. A site could meet several neighbors in a tick. Bytes flipped after the interactions, rain could refill dead sites, and the weather was computed by the planet in numpy.
+- **Physics 2** (`soup.PHYSICS`): the laws above. A world records its physics in `meta.json`, and a run made under one version does not resume under another.
 
 ## Sources
 
