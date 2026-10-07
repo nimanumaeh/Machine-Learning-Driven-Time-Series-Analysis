@@ -237,7 +237,7 @@ def interact(soup, pairs, steps, senses, selfs, wallet, act, flow, stats, heat=0
 def neighbors(X, Y, radius=2):
     """Offsets of each site's neighborhood on an X (wrapping) by Y (bounded) lattice."""
     offs = [(dx, dy) for dx in range(-radius, radius + 1) for dy in range(-radius, radius + 1)
-            if (dx, dy) != (0, 0)]
+            if (dx, dy) != (0, 0) and abs(dy) < Y and abs(dx) < X]
     return np.array(offs, np.int64)
 
 
@@ -248,7 +248,7 @@ def pair_up(rng, X, Y, initiators, offsets):
     nx = (x + o[:, 0]) % X
     ny = y + o[:, 1]
     flip = (ny < 0) | (ny >= Y)                            # the poles reflect
-    ny = np.where(flip, y - o[:, 1], ny)
+    ny = np.clip(np.where(flip, y - o[:, 1], ny), 0, Y - 1)
     return np.stack([initiators, ny * X + nx], 1)
 
 

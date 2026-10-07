@@ -276,3 +276,32 @@ def test_an_instruction_never_reads_itself():
     assert list(act) == [0, -1]                                # it acts on nothing: stays flat
     t, *_, act, w, flow = execute(tape("T", n=8), wallet=(10.0, 10.0))
     assert w.tolist() == [10.0, 10.0]
+
+
+def test_neighbors_stay_on_tiny_lattices():
+    rng = np.random.default_rng(0)
+    for X, Y in ((64, 1), (8, 2), (3, 3)):
+        sites = np.arange(X * Y)
+        p = pair_up(rng, X, Y, np.repeat(sites, 20), neighbors(X, Y))
+        assert (p[:, 1] >= 0).all() and (p[:, 1] < X * Y).all() and (p[:, 0] != p[:, 1]).all()
+
+
+def test_a_transplanted_organism_runs_on_unseen_data_and_explains_itself():
+    from evotrader.transplant import drivers, live, organisms, sandbox, summary
+    pl, w = world()
+    live_rows = synthetic_rows(600, seed=7, step_s=1, start_ms=DAY0)
+    for r in live_rows[:300]:
+        w.step(r, pl.step(r))
+    s, e, x, y, tape = organisms(w, k=1)[0]
+    assert e == pytest.approx(w.equity()[s])
+    trader = assemble(["x", "S", "A"] + ["x"] * (L - 3))        # long when stream 0 reads above its median
+    trader[0] = 0                                               # head 0 on byte 0: reads stream 0
+    p2, colony = sandbox(w, x, 0, trader, sites=16)
+    assert colony.S == 16 and (colony.soup == trader).all() and colony.noise == 0.0
+    res = live(p2, colony, synthetic_rows(1200, seed=8, step_s=1, start_ms=DAY0 + 3_600_000), every=5)
+    out = summary(res)
+    assert out["trades"] and out["orders"] > 0
+    assert out["market"] == pytest.approx(out["return"] + out["fees"] + out["funding"] + out["heat"])
+    d = drivers(res)
+    prices = {f"{n} level" for n in ("close", "high", "low", "mark", "spot")}
+    assert d and {n for n, _ in d[:5]} <= prices and d[0][1] > 0.3   # it follows the price level
