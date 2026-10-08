@@ -55,9 +55,9 @@ def _life_grid(r0, r1, tick0, env, band, acct, counts, flow, soup, regs, mask, a
         buf = tick & 1
         s = start
         while s < S:
-            ph.live_site(s, tick, r, env, band, acct, counts, flow, soup, regs, mask, alive, doomed, partner,
-                         claimv, target, birthv, divide, offsets, noise_cdf, expo, gears, table, br, fp, ip_,
-                         selfs)
+            ph.live_site(s, tick, r, env, band, acct, counts, flow, soup, regs, mask, alive, doomed, life,
+                         partner, claimv, target, birthv, divide, offsets, noise_cdf, expo, gears, table, br, fp,
+                         ip_, selfs)
             if birthv[s] != np.uint64(0):
                 cuda.atomic.max(births, (buf, target[s]), birthv[s])
             if claimv[s] != np.uint64(0):
@@ -80,13 +80,13 @@ def _life_grid(r0, r1, tick0, env, band, acct, counts, flow, soup, regs, mask, a
 
 
 @cuda.jit
-def _life_live(r, tick, env, band, acct, counts, flow, soup, regs, mask, alive, doomed, partner, claimv,
+def _life_live(r, tick, env, band, acct, counts, flow, soup, regs, mask, alive, doomed, life, partner, claimv,
                claims, target, birthv, births, divide, offsets, noise_cdf, expo, gears, table, br, fp, ip_):
     selfs = cuda.local.array(_SELF, uint8)
     s = cuda.grid(1)
     if s < soup.shape[0]:
-        ph.live_site(s, tick, r, env, band, acct, counts, flow, soup, regs, mask, alive, doomed, partner, claimv,
-                     target, birthv, divide, offsets, noise_cdf, expo, gears, table, br, fp, ip_, selfs)
+        ph.live_site(s, tick, r, env, band, acct, counts, flow, soup, regs, mask, alive, doomed, life, partner,
+                     claimv, target, birthv, divide, offsets, noise_cdf, expo, gears, table, br, fp, ip_, selfs)
         buf = tick & 1
         if birthv[s] != np.uint64(0):
             cuda.atomic.max(births, (buf, target[s]), birthv[s])
@@ -239,7 +239,8 @@ class Engine:
                 for r in range(c1 - c0):
                     tick = tick0 + c0 + r
                     _life_live[blocks, self.block](r, tick, e, bd, d["acct"], d["count"], d["flow"], d["soup"],
-                                                   d["regs"], d["mask"], d["alive"], d["doomed"], d["partner"],
+                                                   d["regs"], d["mask"], d["alive"], d["doomed"], d["life"],
+                                                   d["partner"],
                                                    d["claimv"], d["claims"], d["target"], d["birthv"],
                                                    d["births"], d["divide"], d["offsets"], d["noise_cdf"],
                                                    d["expo"], d["gears"], d["table"], d["brackets"], d["fp"],

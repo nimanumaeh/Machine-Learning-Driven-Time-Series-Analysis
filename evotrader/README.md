@@ -67,7 +67,7 @@ modal run modal_app.py::selftest               # on cloud GPUs, from your comput
 ```
 
 - `--width` and `--height` set the torus. Every organism starts at the finest tick of the data; longer timescales are what its matter builds.
-- `--metabolism`, `--upkeep`, `--divide-at`, `--cycle`, `--meetings` and `--bite` are the economy's dials (`docs/soup.md` §1).
+- `--starve`, `--metabolism`, `--upkeep`, `--divide-at`, `--cycle`, `--takeover`, `--meetings` and `--bite` are the economy's dials (`docs/soup.md` §1).
 
 The planet's own options: `--population` is the floor below which newcomers arrive, and `--place-capacity` how many organisms a place holds at normal liquidity.
 

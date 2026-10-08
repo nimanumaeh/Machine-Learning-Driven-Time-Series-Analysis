@@ -31,7 +31,8 @@ def status_line(c):
     day = time.strftime("%Y-%m-%d %H:%M", time.gmtime(c["t"]))
     if "births" in c:                                       # a soup world of organisms (physics 3)
         move = c["price"] / c["price0"] - 1 if c["price0"] else 0.0
-        return (f"{day}  alive {c['alive']:5d}/{c['sites']}  born {c['births']:7d}  died {c['deaths']:7d}  "
+        return (f"{day}  alive {c['alive']:5d}/{c['sites']}  born {c['births']:7d}  died {c['deaths']:7d} "
+                f"(starved {c.get('starved', 0):6d})  "
                 f"gen {c['generation_max']:4d}  lines {c['lines']:5d}  energy {c['energy']:10.0f}  "
                 f"net {c['net']:+11.0f}  fees {c['fees']:9.0f}  living {c['metabolism']:9.0f}  "
                 f"long {c['long']:4.0%} short {c['short']:4.0%}  hold {c['timescales']}  BTC {move:+.1%}")

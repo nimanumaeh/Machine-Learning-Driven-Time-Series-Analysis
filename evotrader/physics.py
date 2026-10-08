@@ -6,22 +6,24 @@ finest resolution there is) has three phases. Within a phase no two sites write
 the same memory, so the CPU loops over the sites one by one and a GPU runs them
 all at once, with the same result:
 
-live    each living organism alone: its order fills at the open, liquidation,
-        funding and the cost of living (a body's upkeep, and Kleiber's law)
-        follow; if its energy is gone it is doomed. Otherwise it senses what is happening now, and its own
-        tape runs on from where it stopped (a few instructions a tick: matter
-        that thinks). It may wish to divide into an empty site next to it, and
-        it may wake (more often the more energy it has) to meet a neighbor.
+live    each living organism alone: its order fills at the open, liquidation and
+        funding follow (once its trading since its last meal has made money, that is
+        a meal), then the cost of living (a body's upkeep, and Kleiber's law); if its
+        energy is gone it is doomed.
+        Otherwise it senses what is happening now, and its own tape runs on from
+        where it stopped (a few instructions a tick: matter that thinks). If it is
+        large enough and not hungry it may try to divide (about once a cell
+        cycle), and it may wake to meet a neighbor; both more often the more
+        energy it has (Kleiber).
 birth   the doomed dissolve: their matter returns to nothing and their site to
         space. A site claimed by a dividing parent becomes its child, as a cell
         divides: a copy of the parent's tape (with copying errors) and
         registers, and half of everything it holds, cash, position and margin
-        alike. Only growth leads to birth: energy comes only from the market,
-        and from others. A child takes an empty site, or the site of an organism
-        with less energy than the child is given: the weaker is displaced and
-        dies, and the child eats what it held.
-meet    two neighbors whose claims won run their joined tape: copying, mating,
-        feeding and predation happen here.
+        alike. A child takes an empty site, or the site of a weaker organism, or
+        of one that is hungry (it has gone too long without a meal): the
+        displaced dies, and the child takes over what it held.
+meet    two neighbors whose claims won run their joined tape: copying and
+        mating, and with bites on, feeding on each other, happen here.
 
 Randomness is a pure function of (seed, tick, stream, site), so a world does not
 depend on the order in which its sites are visited, nor on the device.
@@ -44,16 +46,18 @@ OP_LEFT, OP_RIGHT, OP_LEFT1, OP_RIGHT1, OP_DEC, OP_INC, OP_COPY01, OP_COPY10, \
     OP_OPEN, OP_CLOSE, OP_SENSE, OP_SELF, OP_ACT, OP_TRANSFER, OP_GEAR = range(1, 16)
 N_SELF = 3                                 # what E reads: energy, position, leverage
 
-# rows of the account matrix: one exact BTCUSDT perpetual account per organism
-WALLET, Q, ENTRY, MARGIN, FEES, FUNDING, LEV, PENDING, GEAR = range(9)
-N_ACCT = 9
+# rows of the account matrix: one exact BTCUSDT perpetual account per organism, and what its
+# trading has made since its last meal (realized, after fees, funding and liquidations)
+WALLET, Q, ENTRY, MARGIN, FEES, FUNDING, LEV, PENDING, GEAR, MEAL = range(10)
+N_ACCT = 10
 # rows of the counter matrix: totals at each site, over every organism that lived there
-LIQUIDATIONS, TRADES, ORDERS, MEETINGS, THOUGHTS, COPIES, BIRTHS, DEATHS = range(8)
-N_COUNT = 8
-# the organism living at a site: when it was born, its generation, and the site's trades and
-# births when it was born (so that its own are the difference)
-BORN, GEN, TRADES0, BIRTHS0 = range(4)
-N_LIFE = 4
+LIQUIDATIONS, TRADES, ORDERS, MEETINGS, THOUGHTS, COPIES, BIRTHS, DEATHS, STARVED = range(9)
+N_COUNT = 9
+# the organism living at a site: when it was born, its generation, the site's trades and
+# births when it was born (so that its own are the difference), and when it last fed (closed
+# a trade at a profit)
+BORN, GEN, TRADES0, BIRTHS0, FED = range(5)
+N_LIFE = 5
 # its name, its parent's, and its founder's (the first organism of its line)
 ID, PARENT, FOUNDER = range(3)
 N_IDS = 3
@@ -67,8 +71,8 @@ N_ENV = 7
 # the world's constants
 P_STAKE, P_RATE, P_KLEIBER, P_HEAT, P_DIGESTION, P_QUANTUM, P_MAX_LEV, P_STEP, P_FEE, \
     P_HALF_SPREAD, P_MIN_NOTIONAL, P_METABOLISM, P_FLOOR, P_BIRTH_MIN, P_MUTATION, P_UPKEEP, \
-    P_DIVIDE_AT, P_CYCLE = range(18)
-N_FP = 18
+    P_DIVIDE_AT, P_CYCLE, P_TAKEOVER, P_STARVE = range(20)
+N_FP = 20
 I_SEED, I_X, I_Y, I_THINK, I_MEET = range(5)
 N_IP = 5
 # independent streams of randomness
@@ -623,7 +627,12 @@ def meet_tape(tape, steps, sense, mask, self_a, self_b, acct, a, b, act, flow, h
 
 
 # --------------------------------------------------------------------- one tick
-def live_site(s, tick, r, env, band, acct, counts, flow, soup, regs, mask, alive, doomed,
+def hungry(s, tick, life, fp):
+    """Has the organism at s gone longer than the world allows without closing a trade at a profit?"""
+    return fp[P_STARVE] > 0.0 and tick - life[FED, s] > fp[P_STARVE]
+
+
+def live_site(s, tick, r, env, band, acct, counts, flow, soup, regs, mask, alive, doomed, life,
               partner, claimv, target, birthv, divide, offsets, noise_cdf, expo, gears, table, br, fp,
               ip_, selfs):
     """Phase 1 of a tick for site s. It writes only s's own state, and reads whether its
@@ -646,15 +655,35 @@ def live_site(s, tick, r, env, band, acct, counts, flow, soup, regs, mask, alive
         if not (e > 0.0):
             e = 0.0
         cap = max_notional(lv, br)
-        fill(s, min(max(x * lv * e, -cap), cap) / price, price, lv, acct, counts, fp[P_STEP],
-             fp[P_FEE], fp[P_HALF_SPREAD], fp[P_MIN_NOTIONAL])
+        q0 = acct[Q, s]
+        e0 = acct[ENTRY, s]
+        paid = fill(s, min(max(x * lv * e, -cap), cap) / price, price, lv, acct, counts, fp[P_STEP],
+                    fp[P_FEE], fp[P_HALF_SPREAD], fp[P_MIN_NOTIONAL])
         acct[LEV, s] = lv
         counts[ORDERS, s] += 1
-    liquidate(s, env[r, E_HIGH], env[r, E_LOW], acct, counts, br)
+        # what closing all or part of a position realized, after fees
+        q1 = acct[Q, s]
+        closed = 0.0
+        if q0 != 0.0:
+            if q1 == 0.0 or sign(q1) != sign(q0):
+                closed = abs(q0)
+            elif abs(q1) < abs(q0):
+                closed = abs(q0) - abs(q1)
+        acct[MEAL, s] += closed * (price - sign(q0) * fp[P_HALF_SPREAD] - e0) * sign(q0) - paid
+    m0 = acct[MARGIN, s]
+    if acct[Q, s] != 0.0:
+        liquidate(s, env[r, E_HIGH], env[r, E_LOW], acct, counts, br)
+        if acct[Q, s] == 0.0:
+            acct[MEAL, s] -= max(m0, 0.0)                 # the margin is lost
     mark = env[r, E_MARK]
     f = env[r, E_FUNDING]
     if f != 0.0 and f == f:
+        acct[MEAL, s] -= acct[Q, s] * mark * f
         fund(s, f, mark, acct)
+    # once its trading since its last meal has made money, it has eaten
+    if acct[MEAL, s] > 0.0:
+        life[FED, s] = tick
+        acct[MEAL, s] = 0.0
     # living costs energy: the upkeep of a body, and Kleiber's three quarters of what it holds
     e = equity(s, mark, acct)
     if e > 0.0:
@@ -693,10 +722,11 @@ def live_site(s, tick, r, env, band, acct, counts, flow, soup, regs, mask, alive
         w = ratio
     else:
         w = ratio ** kl
-    # a body large enough to divide tries to, about once a cell cycle: in half, into a site
-    # next to it (empty, or held by someone weaker than the child: phase 2)
+    # a body large enough to divide, and not hungry, tries to about once a cell cycle: in
+    # half, into a site next to it (empty, or held by someone weaker or hungry: phase 2)
     divide[s] = 0.0
-    if e >= fp[P_DIVIDE_AT] and uniform(seed, tick, DIVIDE, s) < fp[P_CYCLE] * w:
+    if e >= fp[P_DIVIDE_AT] and not hungry(s, tick, life, fp) and \
+            uniform(seed, tick, DIVIDE, s) < fp[P_CYCLE] * w:
         divide[s] = 0.5
         z = bits(seed, tick, BIRTH, s)
         o = np.int64(z % np.uint64(n_off))
@@ -722,6 +752,7 @@ def die(s, mark, acct, counts, flow, soup, regs, alive, doomed, ids):
     acct[PENDING, s] = np.nan
     acct[GEAR, s] = 1.0
     acct[LEV, s] = 1.0
+    acct[MEAL, s] = 0.0
     for k in range(soup.shape[1]):
         soup[s, k] = 0
     regs[s, 0] = 0
@@ -739,11 +770,11 @@ def birth_site(s, tick, buf, r, env, acct, counts, flow, soup, regs, alive, doom
                divide, ids, life, fp, ip_):
     """Phase 2 for site s: the doomed die; a site claimed by a parent is born into.
 
-    A child takes an empty site, or the site of an organism with less energy than the
-    child is given: the weaker is displaced and dies, and the child takes over what it
-    held (nothing is lost: space changes hands, energy does not vanish). An organism
-    dividing this tick holds its ground. A parent claims one site a tick, and only that
-    site's thread reads or writes the parent here."""
+    A child takes an empty site, or the site of an organism that is hungry or holds
+    less than a share (`takeover`) of what its parent holds: the displaced dies, and
+    the child takes over what it held (nothing is lost: space changes hands, energy
+    does not vanish). An organism dividing this tick holds its ground. A parent claims
+    one site a tick, and only that site's thread reads or writes the parent here."""
     births[1 - buf, s] = np.uint64(0)                     # clean for the next tick
     mark = env[r, E_MARK]
     if alive[s] != 0 and doomed[s] != 0:
@@ -755,14 +786,18 @@ def birth_site(s, tick, buf, r, env, acct, counts, flow, soup, regs, alive, doom
     if birthv[p] != v:
         return
     share = divide[p]
-    give = share * equity(p, mark, acct)
+    pe = equity(p, mark, acct)
+    give = share * pe
     if not (give >= fp[P_BIRTH_MIN]):
         return                                             # too little to live on: no child
     eaten = 0.0
     if alive[s] != 0:
         occupant = equity(s, mark, acct)
-        if birthv[s] != np.uint64(0) or not (give > occupant):
+        weak = hungry(s, tick, life, fp)
+        if birthv[s] != np.uint64(0) or not (weak or occupant < fp[P_TAKEOVER] * pe):
             return                                         # it holds its ground
+        if weak:
+            counts[STARVED, s] += 1                        # it died hungry
         if occupant > 0.0:                                 # the weaker is displaced; the child takes over
             eaten = occupant                               # what it held (closed at the mark)
             flow[s, CARCASS] -= occupant                   # (die() counts it as left behind)
@@ -771,9 +806,11 @@ def birth_site(s, tick, buf, r, env, acct, counts, flow, soup, regs, alive, doom
     w = share * acct[WALLET, p]
     q = share * acct[Q, p]
     m = share * acct[MARGIN, p]
+    meal = share * acct[MEAL, p]
     acct[WALLET, p] -= w
     acct[Q, p] -= q
     acct[MARGIN, p] -= m
+    acct[MEAL, p] -= meal
     flow[p, TO_CHILDREN] += give
     seed = ip_[I_SEED]
     mu = fp[P_MUTATION]
@@ -794,6 +831,7 @@ def birth_site(s, tick, buf, r, env, acct, counts, flow, soup, regs, alive, doom
     acct[PENDING, s] = acct[PENDING, p]
     acct[GEAR, s] = acct[GEAR, p]
     acct[LEV, s] = acct[LEV, p]
+    acct[MEAL, s] = meal
     ids[ID, s] = (np.uint64(tick) << np.uint64(24)) | np.uint64(s)
     ids[PARENT, s] = ids[ID, p]
     ids[FOUNDER, s] = ids[FOUNDER, p]
@@ -801,6 +839,7 @@ def birth_site(s, tick, buf, r, env, acct, counts, flow, soup, regs, alive, doom
     life[GEN, s] = life[GEN, p] + 1
     life[TRADES0, s] = counts[TRADES, s]
     life[BIRTHS0, s] = counts[BIRTHS, s]
+    life[FED, s] = life[FED, p]                            # as hungry as its parent
     alive[s] = 1
     counts[BIRTHS, p] += 1
 
@@ -856,7 +895,7 @@ def cpu_life(r0, r1, tick0, env, band, acct, counts, flow, soup, regs, mask, ali
         tick = tick0 + r
         buf = tick & 1
         for s in range(S):
-            live_site(s, tick, r, env, band, acct, counts, flow, soup, regs, mask, alive, doomed,
+            live_site(s, tick, r, env, band, acct, counts, flow, soup, regs, mask, alive, doomed, life,
                       partner, claimv, target, birthv, divide, offsets, noise_cdf, expo, gears, table, br,
                       fp, ip_, selfs)
             v = birthv[s]
@@ -938,7 +977,7 @@ def cpu_epochs(e0, e1, seed, wake, soup, offsets, Xs, Y, partner, claimv, claims
 
 
 # --------------------------------------------------------------------- compiling the laws
-LAWS = ("mix", "bits", "uniform", "run_tape", "sign", "tier", "max_notional", "equity", "fill",
+LAWS = ("mix", "bits", "uniform", "run_tape", "sign", "tier", "max_notional", "equity", "fill", "hungry",
         "liquidate", "fund", "rint", "to_byte", "energy_byte", "exposure_byte", "read_self", "neighbor",
         "torus", "think", "meet_tape", "live_site", "die", "birth_site", "meet_site", "bff_claim",
         "bff_interact")

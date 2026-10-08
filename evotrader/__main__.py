@@ -248,7 +248,9 @@ def cmd_soup(args):
         soup = Soup(cfg, width=args.width, height=args.height, step_s=step_s, seed=args.seed,
                     occupancy=args.occupancy, think=args.think, meet=args.meet, meetings=args.meetings,
                     metabolism_days=args.metabolism, upkeep=args.upkeep, floor=args.floor,
+                    starve_days=args.starve,
                     birth_min=args.birth_min, divide_at=args.divide_at, cycle_days=args.cycle,
+                    takeover=args.takeover,
                     mutation=args.mutation, noise=args.noise, heat=heat, digestion=args.digestion,
                     quantum=args.bite, matter=matter, layout=args.layout)
         planet = soup.planet
@@ -257,7 +259,9 @@ def cmd_soup(args):
                 "resolution_s": step_s, "width": args.width, "height": args.height,
                 "occupancy": args.occupancy, "think": args.think, "meet": args.meet,
                 "meetings": args.meetings, "metabolism_days": args.metabolism, "upkeep": args.upkeep,
-                "floor": args.floor, "divide_at": soup.divide_at, "cycle_days": args.cycle,
+                "floor": args.floor, "starve_days": args.starve, "divide_at": soup.divide_at,
+                "cycle_days": args.cycle,
+                "takeover": args.takeover,
                 "birth_min": args.birth_min, "mutation": args.mutation, "noise": args.noise, "heat": heat,
                 "digestion": args.digestion, "bite": args.bite,
                 "days": args.synthetic, "null": args.null, "market_seed": args.market_seed,
@@ -421,11 +425,17 @@ def main(argv=None):
                         "to Kleiber's law (energy ** 0.75)")
     p.add_argument("--upkeep", type=float, default=1.0,
                    help="what a body costs to keep, whatever it holds (USDT a day)")
+    p.add_argument("--starve", type=float, default=0.0,
+                   help="an organism that has not closed a trade at a profit for this many days starves "
+                        "(0: no one starves)")
     p.add_argument("--floor", type=float, default=1.0, help="an organism whose equity falls to this dies (USDT)")
     p.add_argument("--birth-min", type=float, default=100.0, help="least energy a child is born with (USDT)")
     p.add_argument("--divide-at", type=float, default=0.0,
                    help="a body holding this much energy (USDT) may divide in half, into an empty site next "
                         "to it or over a neighbor holding less than the child would (default: two stakes)")
+    p.add_argument("--takeover", type=float, default=0.5,
+                   help="a dividing body's child may take over a neighbor holding less than this share of what "
+                        "the parent holds (0.5: less than the child)")
     p.add_argument("--cycle", type=float, default=1.0,
                    help="days between a body's tries to divide, at one stake (more often the more it holds); "
                         "0: every tick")

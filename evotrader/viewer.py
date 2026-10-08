@@ -613,6 +613,7 @@ def soup_page_data(run_dir, max_frames=400):
 
 LIFE_KEEP = ("t", "price", "price0", "sites", "alive", "energy", "net", "injected", "fees", "funding",
              "liquidations", "taken", "lost", "metabolism", "to_children", "carcass", "births", "deaths",
+             "starved", "fed", "since_meal_days",
              "generation_max", "generation_mean", "lines", "top_lines", "long", "short", "mean_abs_exposure",
              "timescales", "timescale_energy", "gears", "energy_map", "alive_map", "exposure_map", "matter")
 
@@ -1028,7 +1029,8 @@ td.code { font-family: var(--mono); font-size: 12px; word-break: break-all; lett
        lives, read its own energy, position and leverage, choose a position (a share of its equity, long or short) and
        choose its leverage, 1x unless it opts for more, on isolated margin. Nothing else is written anywhere.</p>
     <p>Living costs energy every tick: an upkeep for having a body, and more the more it holds (Kleiber's three
-       quarters). Energy enters the world only through trading. An organism that runs out dies; one that grows to the
+       quarters). Energy enters the world only through trading. An organism that runs out dies, and in a world with
+       hunger so does one that has gone too long without closing a trade at a profit; one that grows to the
        size where bodies divide splits in half into a neighboring site, its child carrying a copy of its matter with
        copying errors, and a child may take over the site of a neighbor holding less than it. Neighbors also meet, and
        their joined matter can copy code between them (and, if bites are on, move energy).</p>
@@ -1076,8 +1078,8 @@ td.code { font-family: var(--mono); font-size: 12px; word-break: break-all; lett
     const hold = F.map(f => f.injected * (f.price / f.price0 - 1));
 
     const vitals = document.getElementById("vitals"), V = {};
-    [["alive", "Living"], ["lines", "Lines of descent"], ["energy", "Energy"], ["costs", "Fees · living"],
-     ["pos", "Long · short"], ["btc", "BTC price"]]
+    [["alive", "Living"], ["lines", "Lines of descent"], ["hunger", "Fed"], ["energy", "Energy"],
+     ["costs", "Fees · living"], ["pos", "Long · short"], ["btc", "BTC price"]]
       .forEach(([id, k]) => { const d = document.createElement("div"); d.className = "vital";
         d.innerHTML = `<span class="k">${k}</span><span class="v"></span><span class="s"></span>`;
         vitals.appendChild(d); V[id] = [d.querySelector(".v"), d.querySelector(".s")]; });
@@ -1164,9 +1166,10 @@ td.code { font-family: var(--mono); font-size: 12px; word-break: break-all; lett
       svg.appendChild(cursors[cursors.length - 1]);
       key(keyId, names.map((n, k) => [n, colors[k]])); };
 
-    lines("population", [["alive", F.map(f => f.alive), "var(--life)"], ["lines of descent", F.map(f => f.lines), "var(--gain)", "5 3"],
-                         ["born, in all", F.map(f => f.births), "var(--signal)"], ["died, in all", F.map(f => f.deaths), "var(--loss)"]],
-          v => fmt(v), "population-key");
+    const pop = [["alive", F.map(f => f.alive), "var(--life)"], ["lines of descent", F.map(f => f.lines), "var(--gain)", "5 3"],
+                 ["born, in all", F.map(f => f.births), "var(--signal)"], ["died, in all", F.map(f => f.deaths), "var(--loss)"]];
+    if (F.some(f => f.starved)) pop.push(["of which starved", F.map(f => f.starved || 0), "var(--loss)", "2 2"]);
+    lines("population", pop, v => fmt(v), "population-key");
     const big = Math.max(...F.map(f => Math.abs(f.net)), ...hold.map(Math.abs)) >= 5000;
     const money = v => big ? signed(v / 1000, 0) + "k" : signed(v, 0);
     const gross = F.map(f => f.net + f.fees + f.funding + f.lost + f.metabolism + f.carcass);
@@ -1206,6 +1209,9 @@ td.code { font-family: var(--mono); font-size: 12px; word-break: break-all; lett
       const move = f.price / f.price0 - 1;
       set("alive", fmt(f.alive), `of ${fmt(f.sites)} sites; ${fmt(f.births)} born, ${fmt(f.deaths)} died`);
       set("lines", fmt(f.lines), `deepest ${fmt(f.generation_max)} generations (mean ${fmt(f.generation_mean, 1)})`);
+      if (f.fed == null) set("hunger", "–", "no hunger recorded in this world");
+      else set("hunger", `${fmt(100 * f.fed)}%`, `of the living have closed a trade at a profit; median ${fmt(f.since_meal_days, 1)} ` +
+        `days since a meal; ${fmt(f.starved || 0)} starved`);
       set("energy", fmt(f.energy), `net ${signed(f.net)}; holding BTC: ${signed(hold[i])}`, f.net >= 0 ? "pos" : "neg");
       set("costs", `${fmt(f.fees)} · ${fmt(f.metabolism)}`, `heat ${fmt(f.lost)}; ${fmt(f.liquidations)} liquidations`);
       set("pos", `${fmt(100 * f.long)}% · ${fmt(100 * f.short)}%`, `mean |exposure| ${fmt(f.mean_abs_exposure, 2)}`);
@@ -1227,12 +1233,12 @@ td.code { font-family: var(--mono); font-size: 12px; word-break: break-all; lett
       b.onclick = () => { worlds.querySelectorAll("button").forEach((x, j) => x.setAttribute("aria-pressed", j === k)); mount(R); };
       worlds.appendChild(b); });
     document.getElementById("compare-panel").hidden = false;
-    const cols = ["World", "Days", "Alive", "Born", "Died", "Lines", "Deepest", "Energy", "Net", "Fees", "Living", "Holding BTC"];
+    const cols = ["World", "Days", "Alive", "Born", "Died", "Starved", "Lines", "Deepest", "Energy", "Net", "Fees", "Living", "Holding BTC"];
     document.getElementById("compare").innerHTML = "<tr>" + cols.map((c, j) => `<th${j ? " class='num'" : ""}>${c}</th>`).join("") + "</tr>" +
       RUNS.map(R => { const F = R.frames; if (!F.length) return ""; const f = F[F.length - 1], hold = f.injected * (f.price / f.price0 - 1);
         const cell = (v, cls = "") => `<td class="num ${cls}">${v}</td>`;
         return `<tr><td>${esc(R.label)}</td>` + cell(fmt((f.t - F[0].t) / 86400, 0)) + cell(fmt(f.alive)) + cell(fmt(f.births)) +
-          cell(fmt(f.deaths)) + cell(fmt(f.lines)) + cell(fmt(f.generation_max)) + cell(fmt(f.energy)) +
+          cell(fmt(f.deaths)) + cell(fmt(f.starved || 0)) + cell(fmt(f.lines)) + cell(fmt(f.generation_max)) + cell(fmt(f.energy)) +
           cell(signed(f.net), f.net >= 0 ? "pos" : "neg") + cell(fmt(f.fees)) + cell(fmt(f.metabolism)) +
           cell(signed(hold), hold >= 0 ? "pos" : "neg") + "</tr>"; }).join("");
   }

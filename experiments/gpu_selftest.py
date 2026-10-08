@@ -23,14 +23,18 @@ import numpy as np  # noqa: E402
 warnings.filterwarnings("ignore", message="overflow encountered")   # uint64 hashing, simulated
 
 
-def make(width, height, seed, think=32, meet=128, floor=1.0, divide_at=900.0):
+def make(width, height, seed, think=32, meet=128, floor=1.0, divide_at=900.0, starve_days=0.0):
     """A small, busy world: short lives (a one-day cost of living), bodies that divide young (at 900
     USDT, trying every tick), many births, deaths, takeovers, meetings and bites."""
     from evotrader.config import Config
     from evotrader.soup import Soup
-    return Soup(Config(), width=width, height=height, step_s=1, seed=seed, think=think, meet=meet,
-                meetings=21600.0, metabolism_days=1.0, upkeep=50.0, floor=floor, birth_min=20.0,
-                divide_at=divide_at, cycle_days=0.0, mutation=0.05, noise=5.0, heat=1e-4, quantum=20.0)
+    from evotrader.physics import FED
+    w = Soup(Config(), width=width, height=height, step_s=1, seed=seed, think=think, meet=meet,
+             meetings=21600.0, metabolism_days=1.0, upkeep=50.0, floor=floor, birth_min=20.0,
+             divide_at=divide_at, cycle_days=0.0, mutation=0.05, noise=5.0, heat=1e-4, quantum=20.0,
+             starve_days=starve_days)
+    w.life[FED, ::3] = 1 << 40                     # a third never go hungry: they take over those that do
+    return w
 
 
 def compare(a, b, label):
@@ -45,7 +49,7 @@ def compare(a, b, label):
     worst = float(np.max(np.abs(money[0] - money[1])))
     c = b.counts
     print(f"  {label:28s} matter {'same' if ok else 'DIFFERENT'}   money {'same' if close else 'DIFFERENT'}"
-          f" (largest difference {worst:.2e})   births {c['births']}  deaths {c['deaths']}  meetings {c['meetings']}")
+          f" (largest difference {worst:.2e})   births {c['births']}  deaths {c['deaths']} (starved {c['starved']})  meetings {c['meetings']}")
     return ok and close
 
 
@@ -59,20 +63,22 @@ def main():
     from evotrader.soup import BFF, Primordial
     from evotrader.synthetic import synthetic_rows
     print(f"device: {gpu.device_name()}")
-    if args.small:                                  # the floor is high so that some die at once
+    if args.small:                                  # the floor is high so that some die at once, and some starve
         width, height, steps, n_rows, X, Y, epochs, floor = 6, 6, 256, args.rows or 12, 8, 4, 6, 300.0
+        starve = 8 / 86400
     else:
         width, height, steps, n_rows, X, Y, epochs, floor = 32, 32, 8192, args.rows or 3000, 128, 8, 200, 1.0
+        starve = 0.0
     rows = np.array(synthetic_rows(n_rows, seed=5, step_s=1, start_ms=1_700_006_400_000))
     good = True
 
     print(f"living matter: {width * height} sites, {n_rows} ticks")
-    cpu = make(width, height, 3, floor=floor)
+    cpu = make(width, height, 3, floor=floor, starve_days=starve)
     tic = time.time()
     cpu.advance(rows)
     print(f"  cpu                          {time.time() - tic:7.2f}s")
     for sync in ("grid", "launch"):
-        g = make(width, height, 3, floor=floor).to_gpu(sync=sync)
+        g = make(width, height, 3, floor=floor, starve_days=starve).to_gpu(sync=sync)
         tic = time.time()
         g.advance(rows)
         g.sync()

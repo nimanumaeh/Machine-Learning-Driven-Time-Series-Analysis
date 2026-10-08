@@ -44,7 +44,8 @@ def sandbox(world, s, matter=None, sites=1, seed=0, living=False):
     sb = Soup(world.cfg, width=sites, height=1, step_s=world.planet.step_s, seed=seed, occupancy=1.0,
               think=world.think_steps, meet=world.meet_steps, meetings=0.0,
               metabolism_days=world.metabolism_days if living else float("inf"),
-              upkeep=world.upkeep if living else 0.0, floor=world.floor, birth_min=world.birth_min,
+              upkeep=world.upkeep if living else 0.0, floor=world.floor, starve_days=0.0,
+              birth_min=world.birth_min,
               divide_at=float("inf"), mutation=0.0, noise=0.0, heat=world.heat, digestion=world.digestion,
               quantum=world.quantum, kleiber=world.kleiber, matter=_fill(tape, sites), layout=world.layout)
     sb.mask[:] = world.mask[s]

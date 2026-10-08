@@ -45,7 +45,7 @@ def main():
                        f["birthv"], f["births"], f["divide"], f["act"], f["ids"], f["life"], f["offsets"],
                        f["noise_cdf"], f["expo"], f["gears"], f["table"], f["brackets"], f["fp"], f["ip"]),
         "_life_live": (i64, i64, env, band, f["acct"], f["count"], f["flow"], f["soup"], f["regs"], f["mask"],
-                       f["alive"], f["doomed"], f["partner"], f["claimv"], f["claims"], f["target"], f["birthv"],
+                       f["alive"], f["doomed"], f["life"], f["partner"], f["claimv"], f["claims"], f["target"], f["birthv"],
                        f["births"], f["divide"], f["offsets"], f["noise_cdf"], f["expo"], f["gears"],
                        f["table"], f["brackets"], f["fp"], f["ip"]),
         "_life_birth": (i64, i64, env, f["acct"], f["count"], f["flow"], f["soup"], f["regs"], f["alive"],

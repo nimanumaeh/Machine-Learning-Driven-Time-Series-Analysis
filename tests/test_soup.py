@@ -271,6 +271,36 @@ def test_living_costs_energy_and_an_organism_with_nothing_left_dies():
     assert w.flow[0, physics.CARCASS] == pytest.approx(1.002 - w.flow[0, physics.METABOLISM] + w.flow[0, physics.METABOLISM] - 1.002 + w.flow[0, physics.CARCASS])
 
 
+def test_an_organism_that_has_not_closed_a_trade_at_a_profit_for_too_long_goes_hungry():
+    w = world(upkeep=0.0, metabolism_days=float("inf"), starve_days=1.0)
+    w.acct[physics.WALLET] = 2000.0                                # all large enough to divide, none weaker
+    w.injected = 9 * 2000.0
+    rows = minutes(1443)
+    w.advance(rows[:1442])                                         # more than a day without a meal
+    assert w.alive.all() and w.counts["births"] == 0               # it can wait: hunger is not death
+    assert all(physics.hungry(s, w.tick, w.life, w.fp) for s in range(9))     # but a hungry body cannot divide
+    w.life[physics.FED, 4] = w.tick - 1                            # the one in the middle has just fed
+    w.advance(rows[1442:])
+    assert w.counts["births"] == 1 and w.counts["starved"] == 1    # its child took a hungry neighbor's site
+    c = int(np.nonzero(w.life[physics.GEN] == 1)[0][0])
+    assert w.wallet[c] == pytest.approx(1000.0 + 2000.0)           # and everything it held, however much
+    assert w.equity().sum() == pytest.approx(w.injected)           # nothing lost
+    for entry, owed, meal in ((0.9, 0.0, True), (1.1, 0.0, False), (0.9, 50.0, True), (0.9, 70.0, False)):
+        w = world(width=1, height=1, upkeep=0.0, metabolism_days=float("inf"), starve_days=1.0)
+        rows = minutes(2)
+        rows[:, [C["open"], C["high"], C["low"], C["close"], C["mark_high"], C["mark_low"], C["mark_close"]]] = 60_000.0
+        w.acct[physics.Q, 0], w.acct[physics.ENTRY, 0] = 0.01, entry * 60_000.0
+        w.acct[physics.MARGIN, 0] = 0.01 * entry * 60_000.0
+        w.acct[physics.WALLET, 0] = 1000.0 - w.acct[physics.MARGIN, 0]
+        w.acct[physics.MEAL, 0] = -owed                            # what its trading lost since its last meal
+        w.advance(rows[:1])
+        w.acct[physics.PENDING, 0] = 0.0                           # it closes at the next open: +60 USDT, or -60
+        w.advance(rows[1:])
+        assert w.q[0] == 0 and (w.life[physics.FED, 0] == 1) == meal   # a meal only if it more than makes up
+        assert w.acct[physics.MEAL, 0] == (0.0 if meal else pytest.approx(-owed + 0.01 * (60_000.0 - 0.05 - entry
+                                                                           * 60_000.0) - 0.01 * 59_999.95 * 0.0005))
+
+
 def test_a_body_that_grows_divides_in_half_and_the_child_carries_on():
     w = world(occupancy=0.0)
     w.alive[4] = 1                                                 # one organism, in the middle
@@ -280,6 +310,7 @@ def test_a_body_that_grows_divides_in_half_and_the_child_carries_on():
     w.acct[physics.ENTRY, 4] = 50_000.0
     w.acct[physics.MARGIN, 4] = 500.0
     w.ids[physics.ID, 4] = w.ids[physics.FOUNDER, 4] = 5
+    w.life[physics.FED, 4] = 0
     w.injected = 3100.0
     rows = minutes(1)
     w.mark = rows[0, C["close"]]
@@ -291,6 +322,7 @@ def test_a_body_that_grows_divides_in_half_and_the_child_carries_on():
     assert w.wallet[c] == pytest.approx(w.wallet[4]) and w.q[c] == pytest.approx(w.q[4]) == 0.005
     assert w.acct[physics.MARGIN, c] == pytest.approx(250.0) and w.acct[physics.ENTRY, c] == 50_000.0
     assert w.ids[physics.PARENT, c] == 5 and w.ids[physics.FOUNDER, c] == 5 and w.life[physics.GEN, c] == 1
+    assert w.life[physics.FED, c] == w.life[physics.FED, 4]       # as hungry as its parent
     assert np.array_equal(w.soup[c], w.soup[4]) and np.array_equal(w.regs[c], w.regs[4])   # same mind, same place in it
     assert w.equity()[[4, c]].sum() == pytest.approx(before - w.flow[[4, c], physics.METABOLISM].sum()
                                                      - w.flow[[4, c], physics.LOST].sum(), rel=1e-9)
@@ -312,6 +344,11 @@ def test_a_child_displaces_and_eats_a_weaker_neighbor_but_not_a_stronger_one():
     strong.acct[physics.WALLET, 4] = 3000.0
     strong.advance(minutes(1))
     assert strong.counts["births"] == 0 and strong.counts["deaths"] == 0   # they hold their ground
+    keen = world(upkeep=0.0, metabolism_days=float("inf"), takeover=0.6)
+    keen.acct[physics.WALLET] = 1600.0                             # unless takeover is set above 1600 / 3000
+    keen.acct[physics.WALLET, 4] = 3000.0
+    keen.advance(minutes(1))
+    assert keen.counts["births"] == 1 and keen.counts["deaths"] == 1
 
 
 def test_with_isolated_margin_a_liquidation_takes_only_the_margin():
