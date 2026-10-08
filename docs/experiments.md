@@ -191,7 +191,7 @@ Reproduce with (physics 1 was the soup's law until October 2026, so these runs n
 python -m evotrader soup --minutes --from 2021-01-01 --until 2025-01-01 --interactions 512 --census-every 172800 --max-exposure 1 --run runs/soup-gentle
 python -m evotrader soup ... --max-exposure 1 --heat 0.0001 --digestion 0.8 --run runs/soup-landauer
 python -m evotrader soup ... --max-exposure 125 --heat 0.0001 --digestion 0.8 --run runs/soup-leverage
-# then, with the current code: freeze them, transplant, run forward
+# then, with the code of commit 74ca9a3 (soup physics 2): freeze them, transplant, run forward
 git worktree add /tmp/soup-v1 379e150 && python -I experiments/soup_freeze.py /tmp/soup-v1 runs/soup-*
 python experiments/soup_transplants.py runs/soup-gentle runs/soup-landauer runs/soup-leverage
 python experiments/soup_forward.py runs/soup-landauer evolved && python experiments/soup_forward.py runs/soup-landauer random
@@ -255,3 +255,48 @@ Physics 2 (`docs/soup.md` §1, §8) runs the same world faster, on a CPU or a GP
 **What would change the picture.**
 - **Size.** Bigger worlds hold refuges where hosts and parasites persist, and give selection far more variation to work with. That is what the GPU is for (`docs/gpu.md`).
 - **Time.** Many seeds and longer spans would let rare skilled sequences appear and be told apart from luck.
+
+### Soup physics 3: organisms that can only grow by trading
+
+Physics 3 (`docs/soup.md` §1) turns sites into organisms. Each one thinks on its own every tick, pays to live, dies, divides and opts into leverage, and energy enters the world only by trading. Every world below started from 2,061 founders of random matter with 1,000 USDT each, on a 64 × 64 torus, living through every minute from 2021-01-01.
+
+**First calibration: division at two stakes (four years).**
+
+```bash
+python -m evotrader soup --minutes --from 2021-01-01 --until 2025-01-01 --metabolism 365 --upkeep 1 --run runs/life-365
+# and --metabolism 180 --upkeep 1, --metabolism 730 --upkeep 0.5 (commit cb8372c: a child ate the weaker neighbor it displaced at 80%, bites of 1 USDT)
+```
+
+| Half-life of the cost of living | Upkeep a day | Alive at the end | Births | Deaths | Fees | Cost of living | Heat and digestion |
+|---|---|---|---|---|---|---|---|
+| 180 days | 1 USDT | 0 (extinct April 2023) | 65 | 2,126 | 331,010 | 1,582,231 | 112,336 |
+| 365 days | 1 USDT | 0 (extinct July 2024) | 128 | 2,189 | 360,060 | 1,466,159 | 180,777 |
+| 730 days | 0.5 USDT | 51 | 174 | 2,184 | 451,526 | 1,302,238 | 247,152 |
+
+- A child needs its parent to double its money first, and trading returns take years to double. So there were almost no births, and selection never started. The world simply burned down.
+- The 51 survivors of the 730-day world were mostly leveraged long holders that rode 2023–2024. Transplanted with their positions onto January–March 2025 (BTC −11.8%), they lost 12% to 27%. They followed BTC, with leverage.
+
+**Trial worlds (2021–2022).** Each fixed the failure of the one before (`docs/soup.md` §5):
+
+| World (2021–2022 unless noted) | Result |
+|---|---|
+| Division at 300 USDT every tick, eating at 80%, bites on | Thousands of births a day; churn and predation burned the world down to a few hundred organisms within months. |
+| Lossless takeover, division every tick | A lineage of leveraged longs converted the world in February 2021; the next dip wiped it out (2.6 million USDT to 65,000 in a week). |
+| Cell cycle of a day, bites of 1 USDT | Predators (`[T]` loops) took over and burned 1.6 million USDT in a month. |
+| No bites; takeover of neighbors under half (7-day cycle) | Alive and full for two years (3,907 alive at the end), but 80% never traded. 553,000 of 2.06 million USDT left, mostly lost to the cost of living (918,000) and fees (486,000). Trading before costs: −25,600. |
+| Takeover of neighbors under 90% | Stronger selection (140,000 births in five months), but 96% never traded: idle neighbors took over losing traders. |
+| Hunger as death, 7 days | 3,588 unfed organisms starved on day 8 and took 1.65 million USDT with them; extinct. |
+| Hunger as vulnerability, any profitable close a meal (14 days) | Never-traded fell from 88% to 12%. Churners stayed fed on tiny wins: fees of 970,000 USDT by August 2021, trading before costs −131,000. |
+| Meals net of fees (14 days) | Dust shorts left by repeated division were fed by funding: 97% never traded, yet all looked fed. |
+| Meals that pay for living since the last one (30 days) | Fed lines of traders spread through the 2021 bull run: organisms that never traded fell from 82% to about 25%, and 12 lines remained, 85 generations deep. After the May crash the unpaid cost of living grew for as long as an organism went hungry; births stopped in mid-2021, and the world froze. 218,000 USDT were left at the end of 2022: fees took 1.0 million, the cost of living 600,000, and trading before costs was −170,000. |
+| **The laws of `docs/soup.md` §1 (defaults; a famine is no debt)** | 39,782 births, 16,486 of them over hungry neighbors; never-traded fell from 89% to 16%; 76 generations, 41 lines. Nobody's trading paid after the summer of 2021, and with no one fed the world stood still. 2,959 alive with 210,000 USDT at the end of 2022: fees 1.05 million, cost of living 582,000, trading before costs −171,000. |
+| The same without fees or spread (a control) | Selection pushed leverage up: 104,886 liquidations, trading before costs −1.32 million, 1,975 alive with 160,000 USDT. Without fees, the edge is still missing. |
+
+**On data they never saw.** The ten richest organisms of the default world, each alone with the position it held, from 2025-01-01 to 2026-10-01 (BTC −10.7%): median −9.0%, mean −18.1%. Most held the leveraged positions they had in their world; one that traded every minute lost 99.5%; the best made +5.1%. Random tapes from the same places: median −0.9%.
+
+**Verdict.** The economy now works as intended. Energy comes only from trading. Waiting is allowed but not forever. Leverage is a choice, and a loss is not the end. Under it, two years of selection on real minutes found no trading that pays the market's costs: in the bull run, lineages that happened to be long, and after it, stillness. The world is a battery that runs down. Finding an edge, if random code can find one at all, will take what the GPU is for: worlds 16 to 64 times larger, many seeds, longer history (2017 on), and second data (`docs/gpu.md`).
+
+```bash
+python -m evotrader soup --minutes --from 2021-01-01 --until 2023-01-01 --starve 30 --run runs/cal-m30   # current defaults
+python experiments/soup_life.py runs/cal-m30                                                          # lines, transplants
+```

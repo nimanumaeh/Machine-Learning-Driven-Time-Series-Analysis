@@ -572,6 +572,8 @@ SOUP_KEEP = ("t", "price", "price0", "alive", "alive_by_band", "energy", "energy
 
 
 def soup_label(meta):
+    if meta.get("label"):                                   # a name given to the run
+        return f"{meta['label']} (physics {meta.get('physics', 1)})"
     if meta.get("physics", 1) >= 3:
         cfg = meta.get("config") or {}
         stake = cfg.get("initial_capital", 1000.0)
@@ -649,8 +651,17 @@ def life_page_data(run_dir, meta, frames):
         "label": soup_label(meta),
         "cell_sites": fx * fy,
         "regions": regions,
-        "frames": [{k: _finite(f.get(k)) for k in LIFE_KEEP} for f in frames],
+        "frames": [_compact({k: _finite(f.get(k)) for k in LIFE_KEEP}) for f in frames],
     }
+
+
+def _compact(f):
+    """Maps to the precision a page can show: whole USDT, and exposure to two decimals."""
+    if f.get("energy_map") is not None:
+        f["energy_map"] = [[round(v) for v in row] for row in f["energy_map"]]
+    if f.get("exposure_map") is not None:
+        f["exposure_map"] = [[round(v, 2) for v in row] for row in f["exposure_map"]]
+    return f
 
 
 def write_soup_viewer(run_dirs, out, max_frames=400, bare=False):
@@ -1039,10 +1050,11 @@ td.code { font-family: var(--mono); font-size: 12px; word-break: break-all; lett
        lives, read its own energy, position and leverage, choose a position (a share of its equity, long or short) and
        choose its leverage, 1x unless it opts for more, on isolated margin. Nothing else is written anywhere.</p>
     <p>Living costs energy every tick: an upkeep for having a body, and more the more it holds (Kleiber's three
-       quarters). Energy enters the world only through trading. An organism that runs out dies, and in a world with
-       hunger so does one that has gone too long without closing a trade at a profit; one that grows to the
-       size where bodies divide splits in half into a neighboring site, its child carrying a copy of its matter with
-       copying errors, and a child may take over the site of a neighbor holding less than it. Neighbors also meet, and
+       quarters). Energy enters the world only through trading. An organism that runs out dies. It eats when its
+       trading since its last meal has paid for its living; one that has not eaten for too long is hungry. A body
+       large enough, and not hungry, divides in half into a neighboring site, its child carrying a copy of its matter
+       with copying errors. A child may take over the site of a hungry neighbor, or of one holding less than half of
+       what its parent holds. Neighbors also meet, and
        their joined matter can copy code between them (and, if bites are on, move energy).</p>
     <p>How long an organism holds a position is its age over the trades it has made; every organism starts at the
        world's finest tick, and any longer timescale is one its matter found. A program is shown as its instructions:
@@ -1178,7 +1190,7 @@ td.code { font-family: var(--mono); font-size: 12px; word-break: break-all; lett
 
     const pop = [["alive", F.map(f => f.alive), "var(--life)"], ["lines of descent", F.map(f => f.lines), "var(--gain)", "5 3"],
                  ["born, in all", F.map(f => f.births), "var(--signal)"], ["died, in all", F.map(f => f.deaths), "var(--loss)"]];
-    if (F.some(f => f.starved)) pop.push(["of which starved", F.map(f => f.starved || 0), "var(--loss)", "2 2"]);
+    if (F.some(f => f.starved)) pop.push(["of which hungry", F.map(f => f.starved || 0), "var(--loss)", "2 2"]);
     lines("population", pop, v => fmt(v), "population-key");
     const big = Math.max(...F.map(f => Math.abs(f.net)), ...hold.map(Math.abs)) >= 5000;
     const money = v => big ? signed(v / 1000, 0) + "k" : signed(v, 0);
@@ -1220,8 +1232,8 @@ td.code { font-family: var(--mono); font-size: 12px; word-break: break-all; lett
       set("alive", fmt(f.alive), `of ${fmt(f.sites)} sites; ${fmt(f.births)} born, ${fmt(f.deaths)} died`);
       set("lines", fmt(f.lines), `deepest ${fmt(f.generation_max)} generations (mean ${fmt(f.generation_mean, 1)})`);
       if (f.fed == null) set("hunger", "–", "no hunger recorded in this world");
-      else set("hunger", `${fmt(100 * f.fed)}%`, `of the living have closed a trade at a profit; median ${fmt(f.since_meal_days, 1)} ` +
-        `days since a meal; ${fmt(f.starved || 0)} starved`);
+      else set("hunger", `${fmt(100 * f.fed)}%`, `of the living have eaten (their trading paid for their living); median ` +
+        `${fmt(f.since_meal_days, 1)} days since a meal; ${fmt(f.starved || 0)} lost their place hungry`);
       set("energy", fmt(f.energy), `net ${signed(f.net)}; holding BTC: ${signed(hold[i])}`, f.net >= 0 ? "pos" : "neg");
       set("costs", `${fmt(f.fees)} · ${fmt(f.metabolism)}`, `heat ${fmt(f.lost)}; ${fmt(f.liquidations)} liquidations`);
       set("pos", `${fmt(100 * f.long)}% · ${fmt(100 * f.short)}%`, `mean |exposure| ${fmt(f.mean_abs_exposure, 2)}`);

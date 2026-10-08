@@ -8,12 +8,13 @@ A world therefore runs the same on a laptop, a CPU server or a GPU. `modal_app.p
 
 ## 1. Why one world on any device
 
-A tick (one row of market data) has two phases. In neither phase do two sites write the same memory:
+A tick (one row of market data) has three phases (`docs/soup.md` §1). In none of them do two sites write the same memory:
 
 | Phase | Each site, alone |
 |---|---|
-| **market** | Its pending order fills at the open. Liquidation and funding follow. Its senses update if its latitude ticked. A few of its bytes may flip. It may wake (Kleiber: more often the more energy it has) and claim a random neighbor. |
-| **interaction** | If its claims on itself and on its neighbor both won (the highest random claim on either site), it runs their joined tape. |
+| **live** | Its pending order fills at the open, at the leverage it chose. Liquidation, funding and the cost of living follow; an organism with nothing left is doomed. A few of its bytes may flip, and its matter thinks for a few instructions. If it is large enough it may try to divide (claiming a neighboring site), and it may wake to meet a neighbor (claiming it). |
+| **birth** | The doomed die. A site claimed by a dividing parent becomes its child, if it is empty or its occupant holds less than the child would get. |
+| **meet** | If its claims on itself and on its neighbor both won (the highest random claim on either site), the two run their joined tape. |
 
 The CPU loops over the sites; the GPU gives each site a thread. Randomness is a pure function of (seed, tick, stream, site), so the result does not depend on the order in which sites run, nor on how the ticks are chunked.
 
@@ -27,15 +28,16 @@ The weather (each band's bars read as percentiles) does not depend on the matter
 
 ## 2. Speed
 
-Measured on this project's 4-core CPU box (shared with other runs), 4,096 sites, minute data, at about 430 interactions a tick:
+Measured on this project's 4-core CPU box (shared with other runs), 4,096 sites, minute data:
 
 | Code | ms per tick | 4 years of minutes |
 |---|---|---|
 | Soup physics 1 (numpy per row, until Oct 2026) | 4.3 | 2.5 h |
-| Soup physics 2 on the CPU (compiled loops) | 0.6 | 21 min |
+| Soup physics 2 on the CPU (compiled loops, 430 meetings a tick) | 0.6 | 21 min |
+| Soup physics 3 on the CPU (4,096 organisms each thinking 32 instructions a tick) | 1.2 to 1.5 | 45 to 55 min |
 | GPU | not yet measured here (no GPU): run `modal run modal_app.py::selftest` | |
 
-On a GPU every site works at once. A tick then costs about as long as its longest interaction (at most 8,192 instructions), whatever the world's size. The CPU instead pays for every interaction one after another. So the GPU's advantage grows with the world:
+On a GPU every site works at once. A tick then costs about as long as its slowest site (a few dozen instructions of thought, at most one meeting of 128), whatever the world's size. The CPU instead pays for every organism one after another. So the GPU's advantage grows with the world:
 - 4,096 sites: a few times faster.
 - 65,000 to 260,000 sites: one to two orders of magnitude faster.
 
@@ -43,7 +45,7 @@ On a GPU every site works at once. A tick then costs about as long as its longes
 
 The two ways of separating the phases on a GPU (`--sync`):
 - `grid` (default): one cooperative launch per chunk of ticks, with a grid-wide barrier between phases. No launch per tick.
-- `launch`: two kernel launches a tick. A fallback if a GPU refuses cooperative launches.
+- `launch`: three kernel launches a tick. A fallback if a GPU refuses cooperative launches.
 
 ## 3. On Modal, step by step
 
@@ -73,8 +75,8 @@ Binance's own API refuses some countries, including the US (HTTP 451); the archi
 
 **Run a soup:**
 ```bash
-modal run --detach modal_app.py::soup --name s1 --args "--minutes --from 2021-01-01 --until 2025-01-01 --max-exposure 1 --heat 0.0001 --digestion 0.8"
-modal run --detach modal_app.py::soup --name s2 --gpu H100 --args "--from 2026-09-01 --width 64 --per-place 64 --interactions 16384"
+modal run --detach modal_app.py::soup --name s1 --args "--minutes --from 2021-01-01 --until 2025-01-01"
+modal run --detach modal_app.py::soup --name s2 --gpu H100 --args "--from 2026-09-01 --width 256 --height 256"
 ```
 `--args` takes the flags of `python -m evotrader soup`; `--device gpu` and the run directory are added for you.
 
