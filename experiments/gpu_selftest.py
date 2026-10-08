@@ -23,25 +23,29 @@ import numpy as np  # noqa: E402
 warnings.filterwarnings("ignore", message="overflow encountered")   # uint64 hashing, simulated
 
 
-def make(width, per_place, seed, steps, interactions):
+def make(width, height, seed, think=32, meet=128, floor=1.0, divide_at=900.0):
+    """A small, busy world: short lives (a one-day cost of living), bodies that divide young (at 900
+    USDT), many births, deaths, displacements and meetings."""
     from evotrader.config import Config
-    from evotrader.planet import Planet
     from evotrader.soup import Soup
-    pl = Planet(width=width, seed=0)
-    return Soup(Config(), pl, per_place=per_place, seed=seed, interactions=interactions, steps=steps,
-                max_exposure=125, heat=0.0001, digestion=0.8, noise=0.002)
+    return Soup(Config(), width=width, height=height, step_s=1, seed=seed, think=think, meet=meet,
+                meetings=0.25, metabolism_days=1.0, upkeep=50.0, floor=floor, birth_min=20.0,
+                divide_at=divide_at, mutation=0.05, noise=5.0, heat=1e-4, quantum=20.0)
 
 
 def compare(a, b, label):
     a.sync()
     b.sync()
     ok = np.array_equal(a.soup, b.soup) and np.array_equal(a.count, b.count)
-    ok &= np.array_equal(a.senses, b.senses) and np.array_equal(a.act, b.act)
+    ok &= np.array_equal(a.alive, b.alive) and np.array_equal(a.regs, b.regs)
+    ok &= np.array_equal(a.ids, b.ids) and np.array_equal(a.life, b.life)
     money = np.nan_to_num(a.acct, nan=-1.0), np.nan_to_num(b.acct, nan=-1.0)
-    close = np.allclose(money[0], money[1], rtol=1e-9, atol=1e-9)
+    close = np.allclose(money[0], money[1], rtol=1e-9, atol=1e-9) and np.allclose(a.flow, b.flow, rtol=1e-9,
+                                                                                    atol=1e-9)
     worst = float(np.max(np.abs(money[0] - money[1])))
+    c = b.counts
     print(f"  {label:28s} matter {'same' if ok else 'DIFFERENT'}   money {'same' if close else 'DIFFERENT'}"
-          f" (largest difference {worst:.2e})   interactions {int(b.counts['interactions'])}")
+          f" (largest difference {worst:.2e})   births {c['births']}  deaths {c['deaths']}  meetings {c['meetings']}")
     return ok and close
 
 
@@ -55,20 +59,20 @@ def main():
     from evotrader.soup import BFF, Primordial
     from evotrader.synthetic import synthetic_rows
     print(f"device: {gpu.device_name()}")
-    if args.small:
-        width, per_place, steps, E, n_rows, X, Y, epochs = 1, 4, 256, 8, args.rows or 12, 8, 4, 6
+    if args.small:                                  # the floor is high so that some die at once
+        width, height, steps, n_rows, X, Y, epochs, floor = 6, 6, 256, args.rows or 12, 8, 4, 6, 300.0
     else:
-        width, per_place, steps, E, n_rows, X, Y, epochs = 8, 16, 8192, 256, args.rows or 2000, 128, 8, 200
+        width, height, steps, n_rows, X, Y, epochs, floor = 32, 32, 8192, args.rows or 3000, 128, 8, 200, 1.0
     rows = np.array(synthetic_rows(n_rows, seed=5, step_s=1, start_ms=1_700_006_400_000))
     good = True
 
-    print(f"market soup: {width * per_place * 8} sites, {n_rows} ticks")
-    cpu = make(width, per_place, 3, steps, E)
+    print(f"living matter: {width * height} sites, {n_rows} ticks")
+    cpu = make(width, height, 3, floor=floor)
     tic = time.time()
     cpu.advance(rows)
     print(f"  cpu                          {time.time() - tic:7.2f}s")
     for sync in ("grid", "launch"):
-        g = make(width, per_place, 3, steps, E).to_gpu(sync=sync)
+        g = make(width, height, 3, floor=floor).to_gpu(sync=sync)
         tic = time.time()
         g.advance(rows)
         g.sync()
@@ -93,20 +97,20 @@ def main():
 
 
 def bench(rows):
-    """Seconds per simulated tick for growing worlds, CPU against GPU."""
+    """Milliseconds per simulated tick for growing worlds, CPU against GPU."""
     from evotrader.soup import BFF, Primordial
     print("\nbenchmark (ms per tick; minute or second rows cost the same)")
-    for width, per_place, E in ((32, 16, 512), (64, 64, 4096), (128, 128, 16384)):
-        sites = width * per_place * 8
-        line = f"  {sites:7d} sites, {E:6d} interactions a tick:"
+    for side in (64, 128, 256, 512):
+        line = f"  {side * side:7d} sites:"
         for device in ("cpu", "gpu"):
-            if device == "cpu" and sites > 70_000:
+            if device == "cpu" and side > 128:
                 line += "   cpu    (skipped)"
                 continue
-            w = make(width, per_place, 3, 8192, E)
+            w = make(side, side, 3)
+            w.metabolism_days = 90.0
             if device == "gpu":
                 w.to_gpu()
-            n = 600 if device == "gpu" else 200
+            n = 1000 if device == "gpu" else 100
             w.advance(rows[:20])                                   # compile and warm up
             w.sync()
             tic = time.time()

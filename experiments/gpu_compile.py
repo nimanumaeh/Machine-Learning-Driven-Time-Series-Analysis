@@ -31,29 +31,28 @@ def main():
 
     from evotrader import gpu
     from evotrader.config import Config
-    from evotrader.planet import MINUTE_TAU, Planet
     from evotrader.soup import Primordial, Soup
     from evotrader.weather import NS
 
-    pl = Planet(width=2, seed=0, taus=MINUTE_TAU, step_s=60)
-    w = Soup(Config(), pl, per_place=4, seed=0, interactions=8)
-    env, done, band = np.zeros((4, 7)), np.zeros((4, pl.Y), np.uint8), np.zeros((4, pl.Y, NS), np.uint8)
+    w = Soup(Config(), width=4, height=4, step_s=60, seed=0)
+    env, band = np.zeros((4, 7)), np.zeros((4, 1, NS), np.uint8)
     i64 = np.int64(0)
-    fields = {name: getattr(w, name) for name in gpu.Engine.MUTABLE + gpu.Engine.FIXED}
+    f = {name: getattr(w, name) for name in gpu.Engine.MUTABLE + gpu.Engine.FIXED}
     p = Primordial(8, 2, seed=0)
     kernels = {
-        "_ticks_grid": (i64, i64, i64, env, done, band, fields["acct"], fields["count"], fields["flow"],
-                        fields["soup"], fields["senses"], fields["mask"], fields["site_y"], fields["due"],
-                        fields["partner"], fields["claimv"], fields["claims"], fields["act"],
-                        fields["table"], fields["expo"], fields["brackets"], fields["offsets"],
-                        fields["noise_cdf"], fields["fp"], fields["ip"]),
-        "_market": (i64, i64, env, done, band, fields["acct"], fields["count"], fields["soup"],
-                    fields["senses"], fields["mask"], fields["site_y"], fields["due"], fields["partner"],
-                    fields["claimv"], fields["claims"], fields["brackets"], fields["offsets"],
-                    fields["noise_cdf"], fields["fp"], fields["ip"]),
-        "_interact": (i64, i64, env, fields["acct"], fields["count"], fields["flow"], fields["soup"],
-                      fields["senses"], fields["act"], fields["partner"], fields["claimv"],
-                      fields["claims"], fields["table"], fields["expo"], fields["fp"], fields["ip"]),
+        "_life_grid": (i64, i64, i64, env, band, f["acct"], f["count"], f["flow"], f["soup"], f["regs"],
+                       f["mask"], f["alive"], f["doomed"], f["partner"], f["claimv"], f["claims"], f["target"],
+                       f["birthv"], f["births"], f["divide"], f["act"], f["ids"], f["life"], f["offsets"],
+                       f["noise_cdf"], f["expo"], f["gears"], f["table"], f["brackets"], f["fp"], f["ip"]),
+        "_life_live": (i64, i64, env, band, f["acct"], f["count"], f["flow"], f["soup"], f["regs"], f["mask"],
+                       f["alive"], f["doomed"], f["partner"], f["claimv"], f["claims"], f["target"], f["birthv"],
+                       f["births"], f["divide"], f["offsets"], f["noise_cdf"], f["expo"], f["gears"],
+                       f["table"], f["brackets"], f["fp"], f["ip"]),
+        "_life_birth": (i64, i64, env, f["acct"], f["count"], f["flow"], f["soup"], f["regs"], f["alive"],
+                        f["doomed"], f["births"], f["birthv"], f["divide"], f["ids"], f["life"], f["fp"], f["ip"]),
+        "_life_meet": (i64, i64, env, band, f["acct"], f["count"], f["flow"], f["soup"], f["mask"], f["act"],
+                       f["partner"], f["claimv"], f["claims"], f["alive"], f["life"], f["table"], f["expo"],
+                       f["gears"], f["fp"], f["ip"]),
         "_epochs_grid": (i64, i64, i64, 0.5, p.soup, p.offsets, i64, i64, p.partner, p.claimv, p.claims,
                          i64, p.table, p.stats),
         "_epoch_claim": (i64, i64, 0.5, p.soup, p.offsets, i64, i64, p.partner, p.claimv, p.claims),

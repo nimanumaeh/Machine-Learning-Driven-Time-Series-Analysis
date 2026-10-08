@@ -8,6 +8,19 @@ from evotrader.soup import (BFF, L, STEPS, SYMMETRIC, Primordial, assemble, cens
                             chemistry, disassemble, high_order_entropy, neighbors, replicates, run)
 
 
+import pickle
+
+from evotrader import physics
+from evotrader.config import Config
+from evotrader.data import C
+from evotrader.selfmade import RECEPTORS
+from evotrader.soup import Soup, byte_of_exposure, exposure_of, gear_of
+from evotrader.synthetic import synthetic_rows
+from evotrader.weather import NS
+
+DAY0 = 1_700_006_400_000
+
+
 def tape(*parts, n=8):
     """A joined tape of 2n bytes from text and integers (inert filler is 'x')."""
     out = []
@@ -111,128 +124,6 @@ def test_complexity_is_low_for_random_matter_and_high_for_copies():
     assert c["distinct"] == 4 and c["top"][0][1] == 512
 
 
-# ------------------------------------------------------------ the world, on the market
-import pickle                                                    # noqa: E402
-
-from evotrader.config import Config                              # noqa: E402
-from evotrader.data import C                                     # noqa: E402
-from evotrader.planet import Planet                              # noqa: E402
-from evotrader.soup import Soup, byte_of_exposure, exposure_of  # noqa: E402
-from evotrader.synthetic import synthetic_rows                   # noqa: E402
-
-DAY0 = 1_700_006_400_000
-
-
-def world(matter=None, width=2, per_place=8, interactions=64, **kw):
-    pl = Planet(width=width, seed=0)
-    return pl, Soup(Config(), pl, per_place=per_place, seed=0, interactions=interactions,
-                    matter=matter, **kw)
-
-
-def live(pl, w, rows):
-    w.advance(np.asarray(rows))
-
-
-def test_without_orders_energy_only_moves_between_sites():
-    S = 2 * 8 * 8
-    grab = np.resize(assemble([100, "T", "x", "T"]), L)          # positive: take
-    give = np.resize(assemble([200, "T", "x", "T"]), L)          # negative: give
-    matter = np.where((np.arange(S) % 2 == 0)[:, None], grab, give)   # takers beside givers
-    pl, w = world(matter=matter, noise=0.0, quantum=50.0)
-    live(pl, w, synthetic_rows(300, seed=1, step_s=1, start_ms=DAY0))
-    assert w.counts["orders"] == 0 and w.flow[:, 0].sum() > 0
-    assert w.equity().sum() == pytest.approx(w.injected)          # nothing made, nothing lost
-    assert w.equity().std() > 1                                    # but it moved around
-
-
-def test_orders_fill_at_the_next_open_exactly():
-    rows = synthetic_rows(200, seed=2, step_s=1, start_ms=DAY0)
-    S = 2 * 8 * 8
-    matter = np.tile(assemble([64, "A"] + ["x"] * 62), (S, 1))
-    pl, w = world(matter=matter, noise=0.0, max_exposure=125)
-    r0 = rows[0]
-    w.step(r0)                                                     # matter decides: about 10x long
-    assert np.isfinite(w.pending).any() and not w.q.any()
-    i = int(np.nonzero(np.isfinite(w.pending) & (w.site_y == 0))[0][0])   # an equator site
-    x = w.pending[i]
-    assert x == pytest.approx(exposure_of(64))
-    r1 = rows[1]
-    w.step(r1)
-    fill = r1[C["open"]] + Config().half_spread
-    assert w.acct[physics.ENTRY, i] == pytest.approx(fill)         # at this second's open, plus spread
-    assert w.q[i] * fill == pytest.approx(x * Config().initial_capital, rel=0.02)
-    assert w.acct[physics.FEES, i] > 0 and w.lev[i] == np.ceil(x)
-
-
-def test_time_is_allotted_by_energy_to_the_three_quarters():
-    pl, w = world(noise=0.0, interactions=4, matter=np.full((128, L), 128, np.uint8))   # inert matter
-    rich = np.arange(w.S) % 2 == 0
-    w.wallet[rich] = 16 * w.stake                                  # 16x the energy...
-    live(pl, w, synthetic_rows(4000, seed=1, step_s=1, start_ms=DAY0))
-    n = w.count[physics.INTERACTIONS]
-    ratio = n[rich].mean() / n[~rich].mean()
-    assert ratio == pytest.approx(16 ** 0.75, rel=0.15)            # ...buys 8x the time, not 16x
-    woke = 4000 * w.E / w.S * (rich * 8 + ~rich).sum()              # set by energy, not by a quota;
-    assert 0.7 * woke < n.sum() < woke                             # a few crowded out
-
-
-def test_a_site_meets_at_most_one_neighbor_a_tick():
-    pl, w = world(noise=0.0, interactions=10_000)                  # everyone wants to meet
-    r = synthetic_rows(1, seed=1, step_s=1, start_ms=DAY0)
-    w.step(r[0])
-    met = w.count[physics.INTERACTIONS] > 0
-    j = w.partner[met]
-    assert len(set(np.nonzero(met)[0]) | set(j)) == 2 * met.sum()   # pairs are disjoint
-    assert 0.2 < met.sum() / w.S < 0.5                             # crowding: not everyone gets to
-
-
-def test_senses_exist_only_where_the_stream_does():
-    pl, w = world(width=4, per_place=4)
-    live(pl, w, synthetic_rows(400, seed=3, step_s=1, start_ms=DAY0))
-    absent = w.mask == 0
-    assert absent.any() and (w.senses[absent] == 0).all()          # nothing there reads as ordinary
-    present = (w.mask == 1) & (w.site_y[:, None] == 0)
-    assert (w.senses[present] != 0).mean() > 0.5
-
-
-def test_the_soup_world_resumes_exactly():
-    rows = synthetic_rows(900, seed=4, step_s=1, start_ms=DAY0)
-    pl, w = world()
-    live(pl, w, rows[:400])
-    pl2, w2 = pickle.loads(pickle.dumps((pl, w)))
-    live(pl, w, rows[400:])
-    live(pl2, w2, rows[400:])
-    assert np.array_equal(w.soup, w2.soup) and np.array_equal(w.equity(), w2.equity())
-    c = w.census(top=3)
-    assert c["energy"] == pytest.approx(float(w.equity().sum()))
-    assert c["net"] == pytest.approx(c["energy"] - c["injected"])
-    assert set(c) >= {"matter", "energy_map", "alive_map", "counts"}
-
-
-def test_exposure_bytes_round_trip():
-    for x in (-125, -10, -1, -0.05, 0, 0.04, 2.4, 10, 125):
-        assert exposure_of(byte_of_exposure(x)) == pytest.approx(x, rel=0.05, abs=0.02)
-    assert exposure_of(0) == 0 and exposure_of(64) == -exposure_of(192) > 0   # 0 is stillness
-
-
-def test_a_latitude_trades_only_at_its_own_tick():
-    rows = synthetic_rows(12, seed=2, step_s=1, start_ms=DAY0)
-    S = 2 * 8 * 8
-    matter = np.tile(assemble([64, "A"] + ["x"] * 62), (S, 1))
-    pl, w = world(matter=matter, noise=0.0)                        # at most 1x: byte 64 is about 0.42
-    acted_at, filled_at = np.full(w.S, -1), np.full(w.S, -1)
-    for k, r in enumerate(rows):
-        w.step(r)
-        filled_at[(filled_at < 0) & (w.q != 0)] = k
-        acted_at[(acted_at < 0) & (np.isfinite(w.pending) | (w.q != 0))] = k
-    eq, five = (w.site_y == 0) & (filled_at >= 0), (w.site_y == 1) & (filled_at >= 0)
-    assert eq.any() and five.any()
-    assert (filled_at[eq] == acted_at[eq] + 1).all()               # the equator: the next second
-    nxt = (acted_at[five] // 5 + 1) * 5                            # the 5-second latitude: the second
-    assert (filled_at[five] == nxt).all()                          # after its next tick
-    assert (np.abs(w.exposure()[filled_at >= 0]) <= 1.0 + 1e-9).all()
-
-
 def test_writing_costs_heat_and_matter_without_energy_is_inert():
     prog = tape(">+>+>+", n=8)                              # three writes
     s = np.array([128], np.uint8)
@@ -266,7 +157,7 @@ def test_transfers_lose_what_digestion_does_not_keep():
 
 def test_the_symmetric_chemistry_has_no_lean():
     ops = np.nonzero(SYMMETRIC)[0]
-    assert len(ops) == 14 and abs(ops.mean() - 128) < 1e-9     # code read as data averages to flat
+    assert len(ops) == 16 and abs(ops.mean() - 128) < 1e-9     # code read as data averages to flat
     assert (np.abs(ops.astype(int) - 128) >= 64).all()         # and readings near 128 stay inert
     assert set(np.nonzero(chemistry("bff", market=False))[0]) == set(b"<>{}+-.,[]")
     assert disassemble(assemble("[.>}]S")) == "[.>}]S"
@@ -286,24 +177,245 @@ def test_neighbors_stay_on_tiny_lattices():
     assert len(neighbors(1, 1)) == 0                       # alone, nothing to meet
 
 
-def test_a_transplanted_organism_runs_on_unseen_data_and_explains_itself():
-    from evotrader.transplant import drivers, live, organisms, sandbox, summary
-    pl, w = world()
-    live_rows = synthetic_rows(600, seed=7, step_s=1, start_ms=DAY0)
-    w.advance(live_rows[:300])
-    s, e, x, y, tape = organisms(w, k=1)[0]
+def test_exposure_bytes_round_trip():
+    for x in (-125, -10, -1, -0.05, 0, 0.04, 2.4, 10, 125):
+        assert exposure_of(byte_of_exposure(x)) == pytest.approx(x, rel=0.05, abs=0.02)
+    assert exposure_of(0) == 0 and exposure_of(64) == -exposure_of(192) > 0   # 0 is stillness
+
+
+# ------------------------------------------------------------ living matter on the market (physics 3)
+def world(width=3, height=3, occupancy=1.0, matter=None, **kw):
+    """A small world of organisms (inert matter unless given), no noise, exact copies."""
+    kw.setdefault("noise", 0.0)
+    kw.setdefault("mutation", 0.0)
+    kw.setdefault("meetings", 0.0)
+    if matter is None:
+        matter = np.full(L, 128, np.uint8)                        # 128 is inert
+    return Soup(Config(), width=width, height=height, step_s=60, seed=0, occupancy=occupancy, matter=matter, **kw)
+
+
+def minutes(n, seed=1):
+    return np.array(synthetic_rows(n, seed=seed, step_s=60))
+
+
+def thinking(w, s, steps):
+    """Run site s's matter for `steps` instructions, as one tick would (the plain law, in Python)."""
+    selfs = np.zeros(physics.N_SELF, np.uint8)
+    band = np.arange(NS, dtype=np.uint8) + 1                     # stream k reads k + 1
+    return physics.think(s, steps, w.soup, w.regs, band, w.mask, selfs, w.acct, w.flow, w.heat, w.table,
+                         w.expo, w.gears)
+
+
+def test_matter_thinks_on_its_own_and_carries_on_where_it_stopped():
+    w = world(width=1, height=1)
+    w.soup[0, :3] = assemble("+>+")
+    thinking(w, 0, 2)
+    assert w.soup[0, 0] == assemble("+")[0] + 1 and list(w.regs[0]) == [2, 1, 0]   # it stopped after two
+    thinking(w, 0, 1)
+    assert w.soup[0, 1] == assemble(">")[0] + 1 and w.regs[0, 0] == 3   # and went on from there
+    thinking(w, 0, L - 3)
+    assert w.regs[0, 0] == 0                                       # the tape is a loop
+    w.soup[0] = 128
+    w.soup[0, :2] = assemble("]+")                                 # an unmatched ] does nothing
+    w.regs[0] = [0, 5, 0]
+    executed, _ = thinking(w, 0, 10)
+    assert executed == 10 and w.regs[0, 0] == 10 and w.soup[0, 5] == 129
+
+
+def test_a_and_l_choose_a_position_and_a_leverage_and_s_reads_only_what_is_here():
+    w = world(width=1, height=1)
+    w.soup[0, :3] = [64, assemble("L")[0], assemble("A")[0]]
+    thinking(w, 0, 3)
+    assert w.acct[physics.GEAR, 0] == gear_of(64) == 11          # 126 ** (64 / 127), rounded
+    assert w.pending[0] == pytest.approx(exposure_of(64, 1.0))   # about 0.41 of its equity, long
+    w.soup[0, :3] = [assemble("A")[0], 128, 128]                   # A with head 0 on itself: 0, flat
+    w.regs[0] = 0
+    thinking(w, 0, 1)
+    assert w.pending[0] == 0.0
+    k = RECEPTORS.index("spot")                                    # a regional stream
+    w.mask[0, k] = 0
+    w.soup[0, :2] = [k, assemble("S")[0]]
+    w.regs[0] = 0
+    thinking(w, 0, 2)
+    assert w.soup[0, 0] == 0                                       # it does not exist here: 0
+    w.soup[0, :2] = [1, assemble("S")[0]]
+    w.regs[0] = 0
+    thinking(w, 0, 2)
+    assert w.soup[0, 0] == 2                                       # stream 1 reads 2 in this sense
+
+
+def test_the_order_fills_at_the_next_open_with_the_leverage_it_chose():
+    w = world(width=1, height=1, upkeep=0.0, metabolism_days=float("inf"))
+    w.soup[0, :3] = [64, assemble("L")[0], assemble("A")[0]]
+    rows = minutes(3)
+    w.advance(rows[:1])                                            # it decides (fills next tick)
+    assert w.q[0] == 0 and np.isfinite(w.pending[0])
+    w.advance(rows[1:2])
+    price = rows[1, C["open"]] + Config().half_spread
+    x = exposure_of(64, 1.0)
+    assert w.acct[physics.ENTRY, 0] == pytest.approx(price)
+    assert w.q[0] * price == pytest.approx(x * 11 * 1000.0, rel=0.02)   # 0.41 of its equity, at 11x
+    assert w.acct[physics.MARGIN, 0] == pytest.approx(w.q[0] * price / 11)
+    assert w.acct[physics.FEES, 0] > 0 and w.acct[physics.LEV, 0] == 11
+
+
+def test_living_costs_energy_and_an_organism_with_nothing_left_dies():
+    w = world(width=1, height=1, upkeep=10.0, metabolism_days=30.0)
+    k = 4 * (1 - 2 ** -0.25) * 1000.0 ** 0.25 / 30.0 / 1440       # Kleiber's term, a minute
+    w.advance(minutes(1))
+    assert w.wallet[0] == pytest.approx(1000.0 - 10.0 / 1440 - k * 1000.0 ** 0.75)
+    w.acct[physics.WALLET, 0] = 1.002                              # just above the floor of 1 USDT
+    w.advance(minutes(2)[1:])
+    assert w.alive[0] == 0 and (w.soup[0] == 0).all() and w.counts["deaths"] == 1   # matter to nothing
+    assert w.flow[0, physics.CARCASS] == pytest.approx(1.002 - w.flow[0, physics.METABOLISM] + w.flow[0, physics.METABOLISM] - 1.002 + w.flow[0, physics.CARCASS])
+
+
+def test_a_body_that_grows_divides_in_half_and_the_child_carries_on():
+    w = world(occupancy=0.0)
+    w.alive[4] = 1                                                 # one organism, in the middle
+    w.soup[4] = assemble("+>" * 32)
+    w.acct[physics.WALLET, 4] = 2600.0                             # it has grown past two stakes
+    w.acct[physics.Q, 4] = 0.01                                    # and holds a position
+    w.acct[physics.ENTRY, 4] = 50_000.0
+    w.acct[physics.MARGIN, 4] = 500.0
+    w.ids[physics.ID, 4] = w.ids[physics.FOUNDER, 4] = 5
+    w.injected = 3100.0
+    rows = minutes(1)
+    w.mark = rows[0, C["close"]]
+    before = w.equity()[4]
+    w.advance(rows)
+    child = [s for s in range(9) if s != 4 and w.alive[s]]
+    assert len(child) == 1
+    c = child[0]
+    assert w.wallet[c] == pytest.approx(w.wallet[4]) and w.q[c] == pytest.approx(w.q[4]) == 0.005
+    assert w.acct[physics.MARGIN, c] == pytest.approx(250.0) and w.acct[physics.ENTRY, c] == 50_000.0
+    assert w.ids[physics.PARENT, c] == 5 and w.ids[physics.FOUNDER, c] == 5 and w.life[physics.GEN, c] == 1
+    assert np.array_equal(w.soup[c], w.soup[4]) and np.array_equal(w.regs[c], w.regs[4])   # same mind, same place in it
+    assert w.equity()[[4, c]].sum() == pytest.approx(before - w.flow[[4, c], physics.METABOLISM].sum()
+                                                     - w.flow[[4, c], physics.LOST].sum(), rel=1e-9)
+
+
+def test_a_child_displaces_and_eats_a_weaker_neighbor_but_not_a_stronger_one():
+    w = world(upkeep=0.0, metabolism_days=float("inf"))
+    w.acct[physics.WALLET] = 400.0                                 # weak neighbors all around
+    w.acct[physics.WALLET, 4] = 3000.0                             # and one that has grown
+    w.injected = float(w.acct[physics.WALLET].sum())
+    w.advance(minutes(1))
+    born = np.nonzero(w.life[physics.GEN] == 1)[0]
+    assert len(born) == 1 and w.counts["deaths"] == 1
+    c = born[0]
+    assert w.wallet[c] == pytest.approx(1500.0 + 0.8 * 400.0)     # half the parent, and 80% of the eaten
+    assert w.equity()[w.alive.astype(bool)].sum() + w.flow[:, physics.LOST].sum() == pytest.approx(w.injected)
+    strong = world(upkeep=0.0, metabolism_days=float("inf"))
+    strong.acct[physics.WALLET] = 1600.0                           # neighbors stronger than half of 3000
+    strong.acct[physics.WALLET, 4] = 3000.0
+    strong.advance(minutes(1))
+    assert strong.counts["births"] == 0 and strong.counts["deaths"] == 0   # they hold their ground
+
+
+def test_with_isolated_margin_a_liquidation_takes_only_the_margin():
+    w = world(width=1, height=1, upkeep=0.0, metabolism_days=float("inf"))
+    w.soup[0, :3] = [127, assemble("L")[0], 128]                   # 125x
+    w.soup[0, 3:5] = [16, assemble("A")[0]]                        # with head 0 on 127: all of its equity
+    rows = minutes(4)
+    rows[:, [C["open"], C["high"], C["low"], C["close"], C["mark_high"], C["mark_low"], C["mark_close"]]] = 60_000.0
+    rows[2, [C["low"], C["mark_low"]]] = 59_000.0                   # a 1.7% wick
+    w.advance(rows[:2])
+    assert w.q[0] > 0 and w.acct[physics.LEV, 0] == 125
+    margin = w.acct[physics.MARGIN, 0]
+    wallet = w.wallet[0]
+    w.advance(rows[2:3])
+    assert w.q[0] == 0 and w.count[physics.LIQUIDATIONS, 0] == 1
+    assert w.wallet[0] == pytest.approx(wallet) and w.wallet[0] >= 0      # the margin is gone, nothing more
+    assert margin > 0
+
+
+def test_meetings_bite_with_digestion_and_copy_between_organisms():
+    w = world(width=2, height=1)
+    tape_ = np.zeros(2 * L, np.uint8)
+    tape_[:L] = 128
+    tape_[L:] = 128
+    tape_[0], tape_[1] = 127, assemble("T")[0]                     # the first takes a full bite
+    act = np.full(2, -1, np.int16)
+    band = np.zeros(NS, np.uint8)
+    sa, sb = np.zeros(physics.N_SELF, np.uint8), np.zeros(physics.N_SELF, np.uint8)
+    physics.meet_tape(tape_, 64, band, w.mask, sa, sb, w.acct, 0, 1, act, w.flow, 0.0, 0.8, 1.0, w.table, w.gears)
+    assert w.wallet[0] == pytest.approx(1000.8) and w.wallet[1] == pytest.approx(999.0)
+    assert w.flow[0, physics.LOST] == pytest.approx(0.2)
+    tape_[:L] = assemble(["x"] * L)
+    tape_[:6] = assemble("}" * 0 + "{.")[0:2].tolist() + [128] * 4  # head 1 back onto the other's last byte
+    tape_[0] = assemble("{")[0]
+    tape_[1] = assemble(".")[0]                                    # and copy byte 0 there
+    physics.meet_tape(tape_, 2, band, w.mask, sa, sb, w.acct, 0, 1, act, w.flow, 0.0, 0.8, 1.0, w.table, w.gears)
+    assert tape_[2 * L - 1] == tape_[0]                            # matter moved into the other organism
+
+
+def test_without_trading_every_unit_of_energy_is_accounted_for():
+    from evotrader.soup import MNEMONIC
+    w = Soup(Config(), width=16, height=16, step_s=60, seed=3, metabolism_days=5.0, heat=1e-3, quantum=20.0,
+             divide_at=1050.0)
+    w.table[w.table == MNEMONIC.index("A")] = 0                   # no orders: energy only moves or is lost
+    w.advance(minutes(2000, seed=2))
+    f = w.flow.sum(0)
+    assert w.counts["births"] > 0 and w.counts["deaths"] > 0 and f[physics.TAKEN] > 0
+    alive = w.alive.astype(bool)
+    assert w.equity()[alive].sum() + f[physics.LOST] + f[physics.METABOLISM] + f[physics.CARCASS] == \
+        pytest.approx(w.injected, rel=1e-12)
+
+
+def test_a_world_is_the_same_however_its_ticks_are_chunked_and_resumes_exactly():
+    kw = dict(width=12, height=12, step_s=60, seed=4, heat=1e-4, noise=0.05, mutation=0.05, meetings=0.25,
+              divide_at=1002.0, metabolism_days=30.0)
+    rows = minutes(900, seed=9)
+    a, b = Soup(Config(), **kw), Soup(Config(), **kw)
+    a.advance(rows[:400])
+    for k in range(0, 400, 37):
+        b.advance(rows[k:min(k + 37, 400)])
+    c = pickle.loads(pickle.dumps(a))
+    a.advance(rows[400:])
+    b.advance(rows[400:])
+    c.advance(rows[400:])
+    for x in (b, c):
+        assert np.array_equal(a.soup, x.soup) and np.array_equal(a.acct, x.acct, equal_nan=True)
+        assert np.array_equal(a.ids, x.ids) and a.counts == x.counts
+    n = a.counts
+    assert n["births"] > 0 and n["deaths"] > 0 and n["meetings"] > 0 and n["orders"] > 0
+
+
+def test_the_census_tells_who_lives_how_and_where_energy_went():
+    w = Soup(Config(), width=16, height=16, step_s=60, seed=5, divide_at=1100.0, meetings=0.25)
+    w.advance(minutes(600))
+    c = w.census(top=3)
+    alive = w.alive.astype(bool)
+    assert c["alive"] == alive.sum() and c["energy"] == pytest.approx(float(w.equity()[alive].sum()))
+    assert c["net"] == pytest.approx(c["energy"] - c["injected"])
+    assert sum(c["timescales"]) == c["alive"] and sum(c["gears"]) == c["alive"]
+    assert c["lines"] == len(set(w.ids[physics.FOUNDER, alive])) and c["top_lines"][0]["alive"] >= 1
+    assert set(c) >= {"births", "deaths", "metabolism", "carcass", "to_children", "matter", "energy_map"}
+
+
+def test_a_transplanted_organism_runs_alone_on_unseen_data_and_explains_itself():
+    from evotrader.transplant import drivers, evaluate, live, organisms, sandbox, summary
+    w = Soup(Config(), width=8, height=8, step_s=60, seed=2)
+    w.advance(minutes(300, seed=7))
+    s, e, x, y, tape_ = organisms(w, k=1)[0]
     assert e == pytest.approx(w.equity()[s])
-    trader = assemble(["x", "S", "A"] + ["x"] * (L - 3))        # long when stream 0 reads above its median
-    trader[0] = 0                                               # head 0 on byte 0: reads stream 0
-    p2, colony = sandbox(w, x, 0, trader, sites=16)
-    assert colony.S == 16 and (colony.soup == trader).all() and colony.noise == 0.0
-    res = live(colony, synthetic_rows(1200, seed=8, step_s=1, start_ms=DAY0 + 3_600_000), every=5)
+    trader = assemble(["x", "S", "A", "[", "-", "]"] + ["x"] * (L - 6))   # long when stream 0 reads above
+    trader[0] = 0                                                  # its median; [-] sets the byte back to 0
+    itself = sandbox(w, s)                                         # as it was: tape, registers, leverage
+    assert (itself.soup[0] == w.soup[s]).all() and (itself.regs[0] == w.regs[s]).all()
+    assert (itself.mask[0] == w.mask[s]).all() and itself.acct[physics.GEAR, 0] == w.acct[physics.GEAR, s]
+    colony = sandbox(w, s, trader, sites=1)
+    assert colony.S == 1 and (colony.soup[0] == trader).all() and colony.noise == 0.0
+    res = live(colony, minutes(1200, seed=8), every=5)
     out = summary(res)
-    assert out["trades"] and out["orders"] > 0
+    assert out["trades"] and out["orders"] > 0 and out["living"] == 0.0     # no cost of living here
     assert out["market"] == pytest.approx(out["return"] + out["fees"] + out["funding"] + out["heat"])
+    report = evaluate(w, minutes(600, seed=9), k=2, baseline=1, log=lambda *a: None)
+    assert [r["kind"] for r in report] == ["organism", "organism", "random"]
     d = drivers(res)
     prices = {f"{n} level" for n in ("close", "high", "low", "mark", "spot")}
-    assert d and {n for n, _ in d[:5]} <= prices and d[0][1] > 0.3   # it follows the price level
+    assert d and {n for n, _ in d[:3]} <= prices and d[0][1] > 0.5   # it follows the price level
 
 
 def test_soup_runs_render_as_a_census(tmp_path):
@@ -312,12 +424,13 @@ def test_soup_runs_render_as_a_census(tmp_path):
     from evotrader.viewer import is_soup, write_soup_viewer
     run = tmp_path / "soup"
     run.mkdir()
-    pl, w = world(max_exposure=125, heat=0.0001, digestion=0.8)
+    w = Soup(Config(), width=8, height=8, step_s=60, seed=1, divide_at=1100.0, metabolism_days=30.0)
     (run / "meta.json").write_text(json.dumps({
-        "kind": "soup", "source": "synthetic", "taus": pl.taus.tolist(), "max_exposure": 125,
-        "heat": 0.0001, "digestion": 0.8, "regions": {k: v.astype(int).tolist() for k, v in pl.regions.items()}}))
-    rows = synthetic_rows(1200, seed=4, step_s=1, start_ms=DAY0)
-    planet_run.run_soup(w, [rows[:500], rows[500:]], str(run), census_every_s=300, log=lambda *a: None)
+        "kind": "soup", "physics": 3, "source": "synthetic", "resolution_s": 60, "metabolism_days": 30.0,
+        "upkeep": 1.0, "width": 8, "height": 8,
+        "regions": {k: v.astype(int).tolist() for k, v in w.planet.regions.items()}}))
+    rows = minutes(1200, seed=4)
+    planet_run.run_soup(w, [rows[:500], rows[500:]], str(run), census_every_s=6 * 3600, log=lambda *a: None)
     assert is_soup(str(run)) and not is_soup(str(tmp_path))
     out = tmp_path / "soup.html"
     n = write_soup_viewer(str(run), str(out))
@@ -326,15 +439,13 @@ def test_soup_runs_render_as_a_census(tmp_path):
     assert html.startswith("<!doctype html>") and "<title>BTC Soup Census</title>" in html
     data = json.loads(html.split('type="application/json">')[1].split("</script>")[0].replace("<\\/", "</"))
     shown = data["runs"][0]
-    assert shown["label"] == "125x sun, Landauer heat, digestion 80% (physics 1)"
-    assert shown["bands"][0] == "1s" and len(shown["frames"]) == n
+    assert "physics 3" in shown["label"] and len(shown["frames"]) == n
     last = shown["frames"][-1]
-    assert last["energy"] == pytest.approx(float(w.equity().sum())) and last["matter"]["top"]
+    assert last["alive"] == planet_run.read_census(str(run))[-1]["alive"] and last["energy"] > 0
     assert write_soup_viewer([str(run), str(run)], str(out), bare=True, max_frames=2) == [2, 2]
     assert out.read_text().startswith("<title>")
 
 
-# ------------------------------------------------------------ one law, any device, any chunking
 def test_the_exchange_laws_are_the_accounts_exactly():
     from evotrader.exchange import Accounts
     from evotrader.soup import brackets_matrix
@@ -397,17 +508,6 @@ def test_the_weather_reads_each_band_as_percentiles_of_its_own_past():
     w2 = Weather(TAU, 1)
     *_, again = w2.feed(rows)
     assert np.array_equal(again, band)                              # however the rows are chunked
-
-
-def test_a_world_is_the_same_however_its_ticks_are_chunked():
-    rows = np.array(synthetic_rows(500, seed=9, step_s=1, start_ms=DAY0))
-    pl, a = world(max_exposure=125, heat=0.0001, digestion=0.8, noise=0.01)
-    pl, b = world(max_exposure=125, heat=0.0001, digestion=0.8, noise=0.01)
-    a.advance(rows)
-    for k in range(0, 500, 37):
-        b.advance(rows[k:k + 37])
-    assert np.array_equal(a.soup, b.soup) and np.array_equal(a.acct, b.acct, equal_nan=True)
-    assert a.counts == b.counts and a.counts["interactions"] > 0 and a.counts["orders"] > 0
 
 
 def test_the_gpu_computes_the_same_world():

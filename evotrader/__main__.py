@@ -27,7 +27,7 @@ from . import data, data_seconds, planet_run
 from .brains import NetBrain
 from .config import Config
 from .life import Life
-from .planet import MINUTE_TAU, Planet
+from .planet import Planet
 from .soup import PHYSICS, Soup
 from .mind import RRBrain
 from .selfmade import SelfMadeBrain
@@ -243,26 +243,26 @@ def cmd_soup(args):
     else:
         cfg = _config(args)
         step_s = 60 if args.minutes else 1
-        planet = Planet(width=args.width, seed=args.seed,
-                        taus=MINUTE_TAU if args.minutes else None, step_s=step_s)
         matter = np.load(args.matter) if args.matter else None
-        if matter is not None and matter.shape[0] != planet.X * args.per_place * planet.Y:
-            n = planet.X * args.per_place * planet.Y
-            matter = matter[np.arange(n) % len(matter)]      # tile (or cut) it to the planet
-        soup = Soup(cfg, planet, per_place=args.per_place, seed=args.seed,
-                    interactions=args.interactions, noise=args.noise, matter=matter,
-                    max_exposure=args.max_exposure, heat=args.heat, digestion=args.digestion,
-                    quantum=args.bite, layout=args.layout)
+        heat = args.heat if args.heat is not None else (2e-5 if args.minutes else 1e-6)
+        soup = Soup(cfg, width=args.width, height=args.height, step_s=step_s, seed=args.seed,
+                    occupancy=args.occupancy, think=args.think, meet=args.meet, meetings=args.meetings,
+                    metabolism_days=args.metabolism, upkeep=args.upkeep, floor=args.floor,
+                    birth_min=args.birth_min, divide_at=args.divide_at,
+                    mutation=args.mutation, noise=args.noise, heat=heat, digestion=args.digestion,
+                    quantum=args.bite, matter=matter, layout=args.layout)
+        planet = soup.planet
         store = args.store if args.store != "data/seconds" or not args.minutes else "data/market"
         meta = {"kind": "soup", "physics": PHYSICS, "source": "synthetic" if args.synthetic else "store",
-                "resolution_s": step_s, "taus": planet.taus.tolist(),
-                "max_exposure": args.max_exposure, "heat": args.heat, "digestion": args.digestion,
-                "bite": args.bite,
+                "resolution_s": step_s, "width": args.width, "height": args.height,
+                "occupancy": args.occupancy, "think": args.think, "meet": args.meet,
+                "meetings": args.meetings, "metabolism_days": args.metabolism, "upkeep": args.upkeep,
+                "floor": args.floor, "divide_at": soup.divide_at,
+                "birth_min": args.birth_min, "mutation": args.mutation, "noise": args.noise, "heat": heat,
+                "digestion": args.digestion, "bite": args.bite,
                 "days": args.synthetic, "null": args.null, "market_seed": args.market_seed,
                 "store": store, "symbol": args.symbol, "from": args.start, "until": args.until,
-                "width": args.width, "per_place": args.per_place, "interactions": args.interactions,
-                "noise": args.noise, "matter": args.matter, "layout": args.layout, "seed": args.seed,
-                "config": cfg.to_dict(),
+                "matter": args.matter, "layout": args.layout, "seed": args.seed, "config": cfg.to_dict(),
                 "regions": {k: v.astype(int).tolist() for k, v in planet.regions.items()}}
         os.makedirs(args.run, exist_ok=True)
         with open(meta_path, "w") as f:
@@ -280,8 +280,8 @@ def cmd_soup(args):
     else:
         blocks = data_seconds.iter_second_blocks(meta["store"], meta["symbol"], _ms(meta["from"]),
                                                  _ms(meta["until"]))
-    print(f"soup of {soup.S} sites x {soup.soup.shape[1]} bytes on a planet {planet.X} x {planet.Y}; "
-          f"about {soup.E} interactions a tick at the start (Ctrl-C saves; --resume carries on)")
+    print(f"soup of {soup.S} sites x {soup.soup.shape[1]} bytes on a {planet.X} x {planet.Y} torus, "
+          f"{int(soup.alive.sum())} alive, one tick every {planet.step_s}s (Ctrl-C saves; --resume carries on)")
     tic = time.time()
     n, finished = planet_run.run_soup(soup, blocks, args.run, census_every_s=args.census_every,
                                       max_wall_s=args.max_hours * 3600 if args.max_hours else None)
@@ -401,7 +401,7 @@ def main(argv=None):
     g.add_argument("--seed", type=int, default=0)
     p.set_defaults(fn=cmd_planet)
 
-    p = sub.add_parser("soup", help="a planet of living matter: nothing designed")
+    p = sub.add_parser("soup", help="living matter on the market: only trading keeps it alive")
     store_args(p, default_store="data/seconds")
     p.add_argument("--run", default="runs/soup")
     p.add_argument("--resume", action="store_true")
@@ -410,33 +410,40 @@ def main(argv=None):
     p.add_argument("--synthetic", type=float, metavar="DAYS")
     p.add_argument("--null", action="store_true")
     p.add_argument("--market-seed", type=int, default=0)
-    p.add_argument("--width", type=int, default=32, help="longitudes (latitudes are the 8 timescales)")
-    p.add_argument("--per-place", type=int, default=16, help="sites of matter at each place")
-    p.add_argument("--interactions", type=int, default=1024,
-                   help="sites that wake each tick while every site holds its stake (Kleiber: more "
-                        "when richer, fewer when poorer)")
-    p.add_argument("--noise", type=float, default=0.00024,
-                   help="chance a byte flips, per epoch (as many interactions as sites)")
-    p.add_argument("--matter", help="start from this matter (.npy of sites x bytes, tiled to the planet) "
-                                    "instead of random")
+    p.add_argument("--width", type=int, default=64, help="sites around the torus")
+    p.add_argument("--height", type=int, default=64, help="sites across the torus")
+    p.add_argument("--occupancy", type=float, default=0.5, help="share of sites alive at the start")
+    p.add_argument("--minutes", action="store_true",
+                   help="live on the minute store (2017 on), a tick a minute; otherwise a tick a second")
+    p.add_argument("--metabolism", type=float, default=365.0,
+                   help="days in which an organism holding one stake and earning nothing loses half of it "
+                        "to Kleiber's law (energy ** 0.75)")
+    p.add_argument("--upkeep", type=float, default=1.0,
+                   help="what a body costs to keep, whatever it holds (USDT a day)")
+    p.add_argument("--floor", type=float, default=1.0, help="an organism whose equity falls to this dies (USDT)")
+    p.add_argument("--birth-min", type=float, default=100.0, help="least energy a child is born with (USDT)")
+    p.add_argument("--divide-at", type=float, default=0.0,
+                   help="a body that grows to this much energy (USDT) divides in half (default: two stakes)")
+    p.add_argument("--mutation", type=float, default=1 / 64, help="chance each byte is miscopied at birth")
+    p.add_argument("--noise", type=float, default=1e-3, help="chance a byte flips, per byte per day")
+    p.add_argument("--think", type=int, default=32, help="instructions an organism's matter runs each tick")
+    p.add_argument("--meet", type=int, default=128, help="instructions a meeting of two runs")
+    p.add_argument("--meetings", type=float, default=1 / 16,
+                   help="organisms that wake to meet a neighbor per tick, as a share of all sites, at one stake")
+    p.add_argument("--heat", type=float, default=None,
+                   help="energy (USDT) each byte written costs (default 2e-5 on minutes, 1e-6 on seconds)")
+    p.add_argument("--bite", type=float, default=1.0, help="most energy (USDT) one T instruction moves")
+    p.add_argument("--digestion", type=float, default=0.8,
+                   help="share of energy taken from (or given to) another organism that arrives")
+    p.add_argument("--matter", help="start from this matter (.npy of tapes, tiled over the torus) instead of random")
     p.add_argument("--layout", choices=("symmetric", "bff"), default="symmetric",
                    help="which byte means which instruction: symmetric (no lean to long or short) or the "
                         "ASCII bytes of BFF (to seed with matter from experiments/soup_emergence.py)")
-    p.add_argument("--minutes", action="store_true",
-                   help="live on the minute store (2017 on): latitudes from 1 minute to 2 weeks")
-    p.add_argument("--max-exposure", type=float, default=1.0,
-                   help="largest exposure matter can take (1: signals at no leverage; up to 125)")
-    p.add_argument("--heat", type=float, default=0.0,
-                   help="energy (USDT) each irreversible byte write costs the writing site")
-    p.add_argument("--bite", type=float, default=0.01,
-                   help="most energy (USDT) one T instruction moves")
-    p.add_argument("--digestion", type=float, default=1.0,
-                   help="share of energy taken from (or given to) another site that arrives")
     p.add_argument("--census-every", type=int, default=1800)
     p.add_argument("--device", choices=("cpu", "gpu"), default="cpu",
                    help="where the world runs (gpu: CUDA through numba; see docs/gpu.md)")
     p.add_argument("--sync", choices=("grid", "launch"), default="grid",
-                   help="on the GPU: one cooperative launch per chunk (grid) or two launches a tick")
+                   help="on the GPU: one cooperative launch per chunk (grid) or three launches a tick")
     p.add_argument("--max-hours", type=float, help="stop (and save) after this much wall time")
     g = p.add_argument_group("environment (defaults in evotrader/config.py)")
     g.add_argument("--taker-fee", dest="taker_fee", type=float)

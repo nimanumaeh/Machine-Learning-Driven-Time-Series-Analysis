@@ -7,7 +7,7 @@ to separate the phases:
 
 grid    one cooperative launch per chunk of rows, with a grid-wide barrier
         between phases (fast: no launch per tick)
-launch  two kernel launches per tick (no cooperative launch needed)
+launch  three kernel launches per tick, one per phase (no cooperative launch needed)
 
 Both give the same world as the CPU, up to the last bits of floating point (a
 GPU may fuse a multiply and an add into one rounding): the random numbers are
@@ -28,6 +28,7 @@ from . import physics
 
 ph = physics.target("evotrader.physics.cuda", register_jitable)    # the laws, as device functions
 _TAPE = physics.TAPE
+_SELF = physics.N_SELF
 BLOCK = 128                     # threads per block: the interpreter is heavy on registers
 CHUNK = 4096                    # most ticks per launch
 
@@ -36,14 +37,16 @@ def simulated():
     return os.environ.get("NUMBA_ENABLE_CUDASIM", "0") == "1"
 
 
-# --------------------------------------------------------------------- kernels: the market soup
+# --------------------------------------------------------------------- kernels: living matter
 @cuda.jit
-def _ticks_grid(r0, r1, tick0, env, done, band, acct, counts, flow, soup, senses, mask, site_y, due,
-                partner, claimv, claims, act, table, expo, br, offsets, noise_cdf, fp, ip_):
+def _life_grid(r0, r1, tick0, env, band, acct, counts, flow, soup, regs, mask, alive, doomed, partner, claimv,
+               claims, target, birthv, births, divide, act, ids, life, offsets, noise_cdf, expo, gears, table, br,
+               fp, ip_):
     grid = cuda.cg.this_grid()
     tape = cuda.local.array(_TAPE, uint8)
-    sa = cuda.local.array(2, uint8)
-    sb = cuda.local.array(2, uint8)
+    sa = cuda.local.array(_SELF, uint8)
+    sb = cuda.local.array(_SELF, uint8)
+    selfs = cuda.local.array(_SELF, uint8)
     start = cuda.grid(1)
     stride = cuda.gridsize(1)
     S = soup.shape[0]
@@ -52,44 +55,65 @@ def _ticks_grid(r0, r1, tick0, env, done, band, acct, counts, flow, soup, senses
         buf = tick & 1
         s = start
         while s < S:
-            v = ph.market_site(s, tick, r, env, done, band, acct, counts, soup, senses, mask, site_y,
-                               due, partner, claimv, br, offsets, noise_cdf, fp, ip_)
-            if v != np.uint64(0):
-                cuda.atomic.max(claims, (buf, s), v)
-                cuda.atomic.max(claims, (buf, partner[s]), v)
+            ph.live_site(s, tick, r, env, band, acct, counts, flow, soup, regs, mask, alive, doomed, partner,
+                         claimv, target, birthv, divide, offsets, noise_cdf, expo, gears, table, br, fp, ip_,
+                         selfs)
+            if birthv[s] != np.uint64(0):
+                cuda.atomic.max(births, (buf, target[s]), birthv[s])
+            if claimv[s] != np.uint64(0):
+                cuda.atomic.max(claims, (buf, s), claimv[s])
+                cuda.atomic.max(claims, (buf, partner[s]), claimv[s])
             s += stride
         grid.sync()
         s = start
         while s < S:
-            ph.interact_site(s, buf, r, env, acct, counts, flow, soup, senses, act, partner, claimv,
-                             claims, table, expo, fp, ip_, tape, sa, sb)
+            ph.birth_site(s, tick, buf, r, env, acct, counts, flow, soup, regs, alive, doomed, births, birthv,
+                          divide, ids, life, fp, ip_)
+            s += stride
+        grid.sync()
+        s = start
+        while s < S:
+            ph.meet_site(s, tick, buf, r, env, band, acct, counts, flow, soup, mask, act, partner, claimv, claims,
+                         alive, life, table, expo, gears, fp, ip_, tape, sa, sb)
             s += stride
         grid.sync()
 
 
 @cuda.jit
-def _market(r, tick, env, done, band, acct, counts, soup, senses, mask, site_y, due, partner, claimv,
-            claims, br, offsets, noise_cdf, fp, ip_):
+def _life_live(r, tick, env, band, acct, counts, flow, soup, regs, mask, alive, doomed, partner, claimv,
+               claims, target, birthv, births, divide, offsets, noise_cdf, expo, gears, table, br, fp, ip_):
+    selfs = cuda.local.array(_SELF, uint8)
     s = cuda.grid(1)
     if s < soup.shape[0]:
-        v = ph.market_site(s, tick, r, env, done, band, acct, counts, soup, senses, mask, site_y, due,
-                           partner, claimv, br, offsets, noise_cdf, fp, ip_)
-        if v != np.uint64(0):
-            buf = tick & 1
-            cuda.atomic.max(claims, (buf, s), v)
-            cuda.atomic.max(claims, (buf, partner[s]), v)
+        ph.live_site(s, tick, r, env, band, acct, counts, flow, soup, regs, mask, alive, doomed, partner, claimv,
+                     target, birthv, divide, offsets, noise_cdf, expo, gears, table, br, fp, ip_, selfs)
+        buf = tick & 1
+        if birthv[s] != np.uint64(0):
+            cuda.atomic.max(births, (buf, target[s]), birthv[s])
+        if claimv[s] != np.uint64(0):
+            cuda.atomic.max(claims, (buf, s), claimv[s])
+            cuda.atomic.max(claims, (buf, partner[s]), claimv[s])
 
 
 @cuda.jit
-def _interact(r, tick, env, acct, counts, flow, soup, senses, act, partner, claimv, claims, table, expo,
-              fp, ip_):
-    tape = cuda.local.array(_TAPE, uint8)
-    sa = cuda.local.array(2, uint8)
-    sb = cuda.local.array(2, uint8)
+def _life_birth(r, tick, env, acct, counts, flow, soup, regs, alive, doomed, births, birthv, divide, ids, life,
+                fp, ip_):
     s = cuda.grid(1)
     if s < soup.shape[0]:
-        ph.interact_site(s, tick & 1, r, env, acct, counts, flow, soup, senses, act, partner, claimv,
-                         claims, table, expo, fp, ip_, tape, sa, sb)
+        ph.birth_site(s, tick, tick & 1, r, env, acct, counts, flow, soup, regs, alive, doomed, births, birthv,
+                      divide, ids, life, fp, ip_)
+
+
+@cuda.jit
+def _life_meet(r, tick, env, band, acct, counts, flow, soup, mask, act, partner, claimv, claims, alive, life,
+               table, expo, gears, fp, ip_):
+    tape = cuda.local.array(_TAPE, uint8)
+    sa = cuda.local.array(_SELF, uint8)
+    sb = cuda.local.array(_SELF, uint8)
+    s = cuda.grid(1)
+    if s < soup.shape[0]:
+        ph.meet_site(s, tick, tick & 1, r, env, band, acct, counts, flow, soup, mask, act, partner, claimv,
+                     claims, alive, life, table, expo, gears, fp, ip_, tape, sa, sb)
 
 
 # --------------------------------------------------------------------- kernels: matter alone
@@ -172,8 +196,9 @@ def _grid_for(kernel, args, n, block, cooperative):
 class Engine:
     """A Soup's state on the GPU (Soup.to_gpu)."""
 
-    MUTABLE = ("acct", "count", "flow", "soup", "senses", "due", "partner", "claimv", "claims", "act")
-    FIXED = ("mask", "site_y", "table", "expo", "brackets", "offsets", "noise_cdf", "fp", "ip")
+    MUTABLE = ("acct", "count", "flow", "soup", "regs", "alive", "doomed", "partner", "claimv", "claims",
+               "target", "birthv", "births", "divide", "act", "ids", "life")
+    FIXED = ("mask", "offsets", "noise_cdf", "expo", "gears", "table", "brackets", "fp", "ip")
 
     def __init__(self, soup, sync="grid", block=BLOCK, chunk=CHUNK):
         if sync not in ("grid", "launch"):
@@ -193,35 +218,39 @@ class Engine:
         for name in self.MUTABLE:
             self.d[name].copy_to_host(getattr(self.host, name))
 
-    def ticks(self, env, done, band, tick0):
+    def ticks(self, env, band, tick0):
         d = self.d
         T = len(env)
         S = self.host.S
         for c0 in range(0, T, self.chunk):
             c1 = min(T, c0 + self.chunk)
             e = cuda.to_device(np.ascontiguousarray(env[c0:c1]))
-            dn = cuda.to_device(np.ascontiguousarray(done[c0:c1]))
             bd = cuda.to_device(np.ascontiguousarray(band[c0:c1]))
             if self.sync == "grid":
-                args = (0, c1 - c0, tick0 + c0, e, dn, bd, d["acct"], d["count"], d["flow"], d["soup"],
-                        d["senses"], d["mask"], d["site_y"], d["due"], d["partner"], d["claimv"],
-                        d["claims"], d["act"], d["table"], d["expo"], d["brackets"], d["offsets"],
-                        d["noise_cdf"], d["fp"], d["ip"])
+                args = (0, c1 - c0, tick0 + c0, e, bd, d["acct"], d["count"], d["flow"], d["soup"], d["regs"],
+                        d["mask"], d["alive"], d["doomed"], d["partner"], d["claimv"], d["claims"], d["target"],
+                        d["birthv"], d["births"], d["divide"], d["act"], d["ids"], d["life"], d["offsets"],
+                        d["noise_cdf"], d["expo"], d["gears"], d["table"], d["brackets"], d["fp"], d["ip"])
                 if self._grid is None:
-                    self._grid = _grid_for(_ticks_grid, args, S, self.block, True)
-                _ticks_grid[self._grid, self.block](*args)
+                    self._grid = _grid_for(_life_grid, args, S, self.block, True)
+                _life_grid[self._grid, self.block](*args)
             else:
                 blocks = max(1, math.ceil(S / self.block))
                 for r in range(c1 - c0):
                     tick = tick0 + c0 + r
-                    _market[blocks, self.block](r, tick, e, dn, bd, d["acct"], d["count"], d["soup"],
-                                                d["senses"], d["mask"], d["site_y"], d["due"],
-                                                d["partner"], d["claimv"], d["claims"], d["brackets"],
-                                                d["offsets"], d["noise_cdf"], d["fp"], d["ip"])
-                    _interact[blocks, self.block](r, tick, e, d["acct"], d["count"], d["flow"],
-                                                  d["soup"], d["senses"], d["act"], d["partner"],
-                                                  d["claimv"], d["claims"], d["table"], d["expo"],
-                                                  d["fp"], d["ip"])
+                    _life_live[blocks, self.block](r, tick, e, bd, d["acct"], d["count"], d["flow"], d["soup"],
+                                                   d["regs"], d["mask"], d["alive"], d["doomed"], d["partner"],
+                                                   d["claimv"], d["claims"], d["target"], d["birthv"],
+                                                   d["births"], d["divide"], d["offsets"], d["noise_cdf"],
+                                                   d["expo"], d["gears"], d["table"], d["brackets"], d["fp"],
+                                                   d["ip"])
+                    _life_birth[blocks, self.block](r, tick, e, d["acct"], d["count"], d["flow"], d["soup"],
+                                                    d["regs"], d["alive"], d["doomed"], d["births"], d["birthv"],
+                                                    d["divide"], d["ids"], d["life"], d["fp"], d["ip"])
+                    _life_meet[blocks, self.block](r, tick, e, bd, d["acct"], d["count"], d["flow"], d["soup"],
+                                                   d["mask"], d["act"], d["partner"], d["claimv"], d["claims"],
+                                                   d["alive"], d["life"], d["table"], d["expo"], d["gears"],
+                                                   d["fp"], d["ip"])
         cuda.synchronize()
 
 

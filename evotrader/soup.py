@@ -53,26 +53,31 @@ import lzma
 import numpy as np
 from numba import njit
 
-from .physics import (ACT_NONE, COPIES, E_CLOSE, E_MARK, E_OPEN, E_T, ENTRY, FEES, FUNDING,
-                      I_SEED, I_STEPS, I_XS, I_Y, INSTRUCTIONS, INTERACTIONS, L, LEV, LIQUIDATIONS,
-                      MARGIN, N_ACCT, N_COUNT, N_FP, N_IP, ORDERS, P_DIGESTION, P_FEE,
-                      P_HALF_SPREAD, P_HEAT, P_KLEIBER, P_MAX_EXPOSURE, P_MAX_LEV, P_MIN_NOTIONAL,
-                      P_QUANTUM, P_RATE, P_STAKE, P_STEP, PENDING, Q, STEPS, TRADES, WALLET, cpu,
-                      run_tape)
+from .physics import (BIRTHS, BORN, CARCASS, COPIES, DEATHS, E_CLOSE, E_MARK, E_OPEN, E_T, ENTRY, FEES,
+                      FOUNDER, FUNDING, GEAR, GEN, I_MEET, I_SEED, I_THINK, I_X, I_Y, ID, L, LEV,
+                      LIQUIDATIONS, LOST, MARGIN, MEETINGS, METABOLISM, N_ACCT, N_COUNT, N_FLOW, N_FP,
+                      N_IDS, N_IP, N_LIFE, N_SELF, ORDERS, P_BIRTH_MIN, P_DIGESTION, P_FEE, P_FLOOR,
+                      P_HALF_SPREAD, P_HEAT, P_KLEIBER, P_MAX_LEV, P_METABOLISM, P_MIN_NOTIONAL,
+                      P_MUTATION, P_QUANTUM, P_RATE, P_STAKE, P_STEP, P_UPKEEP, P_DIVIDE_AT, PENDING, Q,
+                      STEPS, TAKEN,
+                      THOUGHTS, TO_CHILDREN, TRADES, TRADES0, WALLET, cpu, run_tape)
+from .planet import REGIONS
+from .selfmade import N_REC, RECEPTORS
 from .weather import NS, Weather
 
-MNEMONIC = " <>{}-+.,[]SEAT"                       # MNEMONIC[op] names operation op
+MNEMONIC = " <>{}-+.,[]SEATL"                      # MNEMONIC[op] names operation op
 # Version of the laws. 1: initiators drawn in proportion to energy ** 0.75, a fixed number a
-# second, run one after another (until October 2026). 2: physics.py, the same on CPU and GPU:
-# each site wakes with a chance set by its own energy, and a site meets at most one neighbor
-# a tick.
-PHYSICS = 2
+# second, run one after another, on latitudes of fixed timescales (until October 2026).
+# 2: the same on CPU and GPU, each site waking with a chance set by its own energy and
+# meeting at most one neighbor a tick. 3: organisms that think on their own at the finest
+# tick, pay to live, die, divide, and choose their leverage (physics.py, docs/soup.md).
+PHYSICS = 3
 
 
 def chemistry(layout="symmetric", market=True):
     """A table of 256 operations, one per byte value.
 
-    "bff": the ASCII bytes of Agüera y Arcas et al. 2024 (and S E A T for the market).
+    "bff": the ASCII bytes of Agüera y Arcas et al. 2024 (and S E A T L for the market).
     "symmetric": mirror pairs at +/-(64 - k) as signed bytes (64 - k and 192 + k), so
     that code read as data is as often positive as negative (no built-in lean to long
     or short, to take or give), and readings of the market, which cluster near 0,
@@ -84,7 +89,7 @@ def chemistry(layout="symmetric", market=True):
         for ch in ops:
             table[ord(ch)] = MNEMONIC.index(ch)
     else:
-        pairs = ["-+", "<>", "{}", ",.", "[]", "SE", "AT"]
+        pairs = ["-+", "<>", "{}", ",.", "[]", "SE", "AT", "LL"]
         for k, (low, high) in enumerate(pairs, start=1):
             for ch, b in ((low, 64 - k), (high, 192 + k)):
                 if ch in ops:
@@ -310,79 +315,161 @@ def noise_thresholds(lam, most=16):
     return np.array(cdf)
 
 
-class Soup:
-    """Matter, energy and time on the planet: the world in which nothing is designed.
+def gear_of(byte):
+    """Leverage as a signed byte: 0 is 1x, and its size on a log scale up to 125x (sign ignored)."""
+    v = np.abs(signed(byte)) / 127.0
+    return np.clip(np.round(np.power(126.0, v)), 1.0, 125.0)
 
-    Sites lie on a lattice of planet.X * per_place longitudes by the planet's
-    latitudes; a site senses what its place on the planet senses. Each holds L
-    bytes of matter and one exact BTCUSDT perpetual account. Every tick (one row
-    of market data), physics.py's two phases run: the market (orders placed by
-    matter fill at the open, liquidations and funding follow, senses update, a few
-    bytes flip, sites wake and claim neighbors) and the interactions. About
-    `interactions` sites wake per tick when every site holds its starting stake;
-    more when the world is richer, fewer when it is poorer. Energy enters and
-    leaves only through the market; transfers only move it.
 
-    The world runs on the CPU, or on a GPU after to_gpu() (gpu.py): the same laws,
-    the same random numbers, the same world.
+class Geography:
+    """A torus of X by Y sites; which market streams can be sensed where (continents).
+
+    Price, volume, trades and the clocks exist everywhere. Each regional group of
+    streams (order flow, premium, spot, open interest, positioning, funding, mark)
+    covers about 55% of the surface, in smooth random continents fixed at birth.
     """
 
-    def __init__(self, cfg, planet, per_place=16, seed=0, interactions=1024, noise=0.00024,
-                 steps=STEPS, matter=None, kleiber=0.75, max_exposure=1.0, heat=0.0,
-                 digestion=1.0, quantum=0.01, layout="symmetric"):
-        self.cfg, self.planet = cfg, planet
+    def __init__(self, X, Y, step_s=60, seed=0):
+        self.X, self.Y, self.step_s = int(X), int(Y), int(step_s)
+        self.taus = np.array([self.step_s], np.int64)        # one timescale: the finest there is
+        rng = np.random.default_rng(seed)
+        x, y = np.meshgrid(np.arange(self.X) / self.X, np.arange(self.Y) / self.Y, indexing="ij")
+        self.avail = np.ones((self.X, self.Y, N_REC + 1), bool)
+        self.regions = {}
+        for name, receptors in REGIONS.items():
+            field = np.zeros((self.X, self.Y))
+            for k in range(1, 4):
+                for _ in range(2):
+                    a, b = rng.integers(-k, k + 1, size=2)
+                    field += rng.normal() * np.sin(2 * np.pi * (a * x + b * y) + rng.uniform(0, 2 * np.pi)) / k
+            here = field > np.quantile(field, 0.45)
+            self.regions[name] = here
+            for r in receptors:
+                self.avail[:, :, RECEPTORS.index(r)] = here
+
+
+class Soup:
+    """Living matter on the BTC market: the world in which only trading keeps you alive.
+
+    A torus of X by Y sites. A living site is an organism: L bytes of matter that run
+    on their own (physics.think), registers saying where they stopped, and one exact
+    BTCUSDT perpetual account whose equity is its energy. Every tick (one row of the
+    market at the finest resolution there is) physics.py's three phases run: live,
+    birth, meet. Energy enters only through trading (and leaves through fees, funding,
+    heat, digestion, the cost of living, and death). Nothing else is given: whatever
+    lives, divides, preys, cooperates or trades well does so because it pays.
+
+    Laws and their dials:
+      metabolism_days  living costs energy in proportion to energy ** 0.75 (Kleiber), set
+                       so that an organism holding one stake and earning nothing loses half
+                       of it in this many days (the poorer, the slower it burns, so a loss
+                       is not the end)
+      upkeep           and a body costs this much (USDT a day) whatever it holds: many tiny
+                       bodies cost more to keep than one large one
+      floor            an organism whose equity falls to this (USDT) dies
+      birth_min        a child needs at least this much (USDT) to be born
+      divide_at        a body that grows to this much energy (USDT) divides in half (as cells
+                       do): success becomes offspring; 0 means two starting stakes
+      mutation         chance each byte is miscopied when a parent divides
+      noise            chance a byte flips, per byte per day
+      think            instructions an organism's matter runs each tick
+      meet, meetings   instructions a meeting runs; organisms waking to meet a neighbor
+                       per tick, as a share of all sites, at one stake (Kleiber)
+      heat             energy (USDT) each byte written costs (Landauer)
+      digestion, quantum  share of a bite that arrives; the most one bite moves (USDT)
+    The world runs on the CPU, or on a GPU after to_gpu() (gpu.py): the same laws, the
+    same random numbers, the same world.
+    """
+
+    def __init__(self, cfg, width=64, height=64, step_s=60, seed=0, occupancy=0.5, think=32, meet=128,
+                 meetings=1 / 16, metabolism_days=365.0, upkeep=1.0, floor=1.0, birth_min=100.0,
+                 divide_at=0.0, mutation=1 / 64,
+                 noise=1e-3, heat=2e-5, digestion=0.8, quantum=1.0, kleiber=0.75, matter=None,
+                 layout="symmetric", geography_seed=None):
+        self.cfg = cfg
         self.seed = int(seed)
         rng = np.random.default_rng(seed)
-        self.per_place = per_place
-        self.Xs, self.Y = planet.X * per_place, planet.Y
-        self.S = S = self.Xs * self.Y
-        self.E, self.steps, self.noise, self.kleiber = interactions, int(steps), float(noise), float(kleiber)
-        self.max_exposure = min(float(max_exposure), float(cfg.max_leverage))
-        self.heat = float(heat)                            # energy per irreversible byte write
-        self.digestion = float(digestion)                  # share of a transfer that arrives
-        self.quantum = float(quantum)                      # the most energy one bite moves
+        self.planet = Geography(width, height, step_s, seed if geography_seed is None else geography_seed)
+        self.X, self.Y = self.planet.X, self.planet.Y
+        self.S = S = self.X * self.Y
+        self.think_steps, self.meet_steps = int(think), int(meet)
+        self.meetings, self.kleiber = float(meetings), float(kleiber)
+        self.metabolism_days, self.floor, self.birth_min = float(metabolism_days), float(floor), float(birth_min)
+        self.upkeep = float(upkeep)
+        self.divide_at = float(divide_at) if divide_at else 2.0 * float(cfg.initial_capital)
+        self.mutation, self.noise, self.heat = float(mutation), float(noise), float(heat)
+        self.digestion, self.quantum = float(digestion), float(quantum)
         self.layout = layout
-        self.table = chemistry(layout)                     # which byte means which operation
+        self.table = chemistry(layout)
         self.stake = float(cfg.initial_capital)
-        self.soup = (rng.integers(0, 256, (S, L), dtype=np.uint8) if matter is None
-                     else np.array(matter, np.uint8).reshape(S, L).copy())
+        # matter, and who is alive
+        self.alive = np.zeros(S, np.uint8)
+        if matter is None:
+            self.soup = np.zeros((S, L), np.uint8)
+            born = rng.random(S) < occupancy
+            self.soup[born] = rng.integers(0, 256, (int(born.sum()), L), dtype=np.uint8)
+        else:
+            m = np.atleast_2d(np.asarray(matter, np.uint8))
+            self.soup = m[np.arange(S) % len(m)].copy()
+            born = rng.random(S) < occupancy
+            self.soup[~born] = 0
+        self.alive[born] = 1
+        self.regs = np.zeros((S, 3), np.int64)
+        # energy: one exact account each
         self.acct = np.zeros((N_ACCT, S))
-        self.acct[WALLET] = self.stake
+        self.acct[WALLET, born] = self.stake
         self.acct[LEV] = 1.0
+        self.acct[GEAR] = 1.0
         self.acct[PENDING] = np.nan
+        self.injected = self.stake * float(born.sum())
         self.count = np.zeros((N_COUNT, S), np.int64)
-        self.flow = np.zeros((S, 3))                       # taken in, given out, dissipated
-        self.act = np.full(S, ACT_NONE, np.int16)
-        self.injected = self.stake * S
+        self.flow = np.zeros((S, N_FLOW))
+        self.life = np.zeros((N_LIFE, S), np.int64)
+        self.ids = np.zeros((N_IDS, S), np.uint64)
+        first = np.nonzero(born)[0].astype(np.uint64)
+        self.ids[ID, born] = first + np.uint64(1)              # founders, named by their site
+        self.ids[FOUNDER, born] = first + np.uint64(1)
+        # senses: what exists where
         site = np.arange(S)
-        self.site_y = site // self.Xs
-        self.site_place = (site % self.Xs) // per_place
-        here = planet.avail[self.site_place, self.site_y, :NS // 2]          # (S, streams)
+        self.site_x, self.site_y = site % self.X, site // self.X
+        here = self.planet.avail[self.site_x, self.site_y, :NS // 2]
         self.mask = np.concatenate([here, here], 1).astype(np.uint8)
-        self.senses = np.zeros((S, NS), np.uint8)          # 0: nothing out of the ordinary
-        self.due = np.zeros(S, np.uint8)                   # its band ticked: its order fills next
+        # the bookkeeping of one tick
+        self.doomed = np.zeros(S, np.uint8)
         self.partner = np.full(S, -1, np.int64)
         self.claimv = np.zeros(S, np.uint64)
         self.claims = np.zeros((2, S), np.uint64)
-        self.band_sites = [np.nonzero(self.site_y == y)[0] for y in range(self.Y)]
-        self.offsets = neighbors(self.Xs, self.Y)
+        self.target = np.full(S, -1, np.int64)
+        self.birthv = np.zeros(S, np.uint64)
+        self.births = np.zeros((2, S), np.uint64)
+        self.divide = np.zeros(S)
+        self.act = np.full(S, -1, np.int16)
+        # the laws' constants
+        self.offsets = neighbors(self.X, self.Y)
         self.brackets = brackets_matrix(cfg)
-        self.expo = exposure_of(np.arange(256), self.max_exposure)    # what an A byte means
-        self.noise_cdf = noise_thresholds(self.noise * self.E * L / S)
+        self.expo = exposure_of(np.arange(256), 1.0)        # A: a share of equity, long or short
+        self.gears = gear_of(np.arange(256))                  # L: leverage, 1x to 125x
+        day = step_s / 86400.0
+        self.noise_cdf = noise_thresholds(self.noise * L * day)
+        k_day = 0.0 if not np.isfinite(self.metabolism_days) else \
+            4 * (1 - 2 ** -0.25) * self.stake ** 0.25 / self.metabolism_days
         self.fp = np.zeros(N_FP)
-        self.fp[[P_STAKE, P_RATE, P_KLEIBER, P_HEAT, P_DIGESTION, P_QUANTUM, P_MAX_EXPOSURE,
-                 P_MAX_LEV, P_STEP, P_FEE, P_HALF_SPREAD, P_MIN_NOTIONAL]] = (
-            self.stake, self.E / S, self.kleiber, self.heat, self.digestion, self.quantum,
-            self.max_exposure, cfg.max_leverage, cfg.qty_step, cfg.taker_fee, cfg.half_spread,
-            cfg.min_notional)
+        self.fp[[P_STAKE, P_RATE, P_KLEIBER, P_HEAT, P_DIGESTION, P_QUANTUM, P_MAX_LEV, P_STEP, P_FEE,
+                 P_HALF_SPREAD, P_MIN_NOTIONAL, P_METABOLISM, P_FLOOR, P_BIRTH_MIN, P_MUTATION, P_UPKEEP,
+                 P_DIVIDE_AT]] = (
+            self.stake, self.meetings, self.kleiber, self.heat, self.digestion, self.quantum,
+            cfg.max_leverage, cfg.qty_step, cfg.taker_fee, cfg.half_spread, cfg.min_notional,
+            k_day * day, self.floor, self.birth_min, self.mutation, self.upkeep * day, self.divide_at)
         self.ip = np.zeros(N_IP, np.int64)
-        self.ip[[I_SEED, I_XS, I_Y, I_STEPS]] = (self.seed, self.Xs, self.Y, self.steps)
-        self.weather = Weather(planet.taus, planet.step_s)
+        self.ip[[I_SEED, I_X, I_Y, I_THINK, I_MEET]] = (self.seed, self.X, self.Y, self.think_steps,
+                                                        self.meet_steps)
+        self.weather = Weather(self.planet.taus, step_s)
+        self.sensed = np.zeros(NS, np.uint8)                  # the market's bytes at the last tick
         self.tick = 0
         self.t = 0.0
         self.price = self.mark = self.price0 = np.nan
         self._engine = None
-        self._stale = False                                # the GPU holds newer state than the host
+        self._stale = False
 
     # ------------------------------------------------------------------ devices
     def to_gpu(self, sync="grid", block=128):
@@ -431,16 +518,18 @@ class Soup:
         if self.price0 != self.price0:
             self.price0 = env[0, E_OPEN]
         if self._engine is not None:
-            self._engine.ticks(env, done, band, self.tick)
+            self._engine.ticks(env, band, self.tick)
             self._stale = True
         else:
-            cpu.cpu_ticks(0, len(rows), self.tick, env, done, band, self.acct, self.count, self.flow,
-                      self.soup, self.senses, self.mask, self.site_y, self.due, self.partner,
-                      self.claimv, self.claims, self.act, self.table, self.expo, self.brackets,
-                      self.offsets, self.noise_cdf, self.fp, self.ip, np.empty(2 * L, np.uint8),
-                      np.empty(2, np.uint8), np.empty(2, np.uint8))
+            cpu.cpu_life(0, len(rows), self.tick, env, band, self.acct, self.count, self.flow, self.soup,
+                         self.regs, self.mask, self.alive, self.doomed, self.partner,
+                         self.claimv, self.claims, self.target, self.birthv, self.births, self.divide,
+                         self.act, self.ids, self.life, self.offsets, self.noise_cdf, self.expo, self.gears,
+                         self.table, self.brackets, self.fp, self.ip, np.empty(2 * L, np.uint8),
+                         np.empty(N_SELF, np.uint8), np.empty(N_SELF, np.uint8), np.empty(N_SELF, np.uint8))
         self.tick += len(rows)
         self.t, self.price, self.mark = env[-1, E_T], env[-1, E_CLOSE], env[-1, E_MARK]
+        self.sensed = band[-1, 0].copy()
 
     def step(self, row, done=None):
         """One row (`done` is accepted for the planet's run loop and not needed)."""
@@ -460,16 +549,16 @@ class Soup:
         return self.acct[PENDING]
 
     @property
-    def lev(self):
-        return self.acct[LEV]
+    def gear(self):
+        return self.acct[GEAR]
 
     @property
     def counts(self):
         self.sync()
         c = self.count.sum(1)
-        return {"interactions": int(c[INTERACTIONS]), "copies": int(c[COPIES]),
-                "instructions": int(c[INSTRUCTIONS]), "orders": int(c[ORDERS]),
-                "trades": int(c[TRADES]), "liquidations": int(c[LIQUIDATIONS]), "rain": 0}
+        return {"meetings": int(c[MEETINGS]), "copies": int(c[COPIES]), "thoughts": int(c[THOUGHTS]),
+                "orders": int(c[ORDERS]), "trades": int(c[TRADES]), "liquidations": int(c[LIQUIDATIONS]),
+                "births": int(c[BIRTHS]), "deaths": int(c[DEATHS])}
 
     def equity(self, idx=slice(None)):
         self.sync()
@@ -481,37 +570,78 @@ class Soup:
         with np.errstate(divide="ignore", invalid="ignore"):
             return np.where(eq > 0, self.acct[Q, idx] * self.mark / np.maximum(eq, 1e-9), 0.0)
 
+    def holding_s(self):
+        """Each living organism's timescale: its age over the positions it has taken (seconds)."""
+        age = (self.tick - self.life[BORN]) * self.planet.step_s
+        own = self.count[TRADES] - self.life[TRADES0]
+        return age / np.maximum(own, 1) * np.where(own > 0, 1.0, np.inf)
+
     # -------------------------------------------------------------- watching
-    def census(self, top=8):
+    TIMESCALES = (("never", np.inf), ("< 5m", 300), ("< 1h", 3600), ("< 6h", 21600), ("< 1d", 86400),
+                  ("< 1w", 604800), ("longer", np.inf))
+    GEARS = (("1x", 1.5), ("2-4x", 4.5), ("5-19x", 19.5), ("20x+", np.inf))
+
+    def census(self, top=8, lines=8):
         self.sync()
         pl = self.planet
         eq = self.equity()
         x = self.exposure()
-        alive = eq >= 0.1 * self.stake
-        place = self.site_place * self.Y + self.site_y
-        energy = np.bincount(place, weights=eq, minlength=pl.X * pl.Y).reshape(pl.X, pl.Y)
-        living = np.bincount(place, weights=alive, minlength=pl.X * pl.Y).reshape(pl.X, pl.Y)
-        held = np.bincount(place, weights=np.abs(x) * alive, minlength=pl.X * pl.Y).reshape(pl.X, pl.Y)
-        matter = census_of_matter(self.soup, top=top, table=self.table)
+        alive = self.alive.astype(bool)
+        n = max(int(alive.sum()), 1)
+        flow = self.flow.sum(0)
         counts = self.counts
-        n = max(counts["interactions"], 1)
-        by_band = lambda v: [round(float(v[self.band_sites[y]].sum()), 2) for y in range(self.Y)]
+        # lines of descent: the founders whose descendants are alive
+        founders, members = np.unique(self.ids[FOUNDER, alive], return_counts=True)
+        order = np.argsort(-members)[:lines]
+        gen = self.life[GEN, alive]
+        line_rows = []
+        for j in order:
+            m = alive & (self.ids[FOUNDER] == founders[j])
+            line_rows.append({"founder": int(founders[j]), "alive": int(members[j]),
+                              "energy": round(float(eq[m].sum()), 2),
+                              "generation": int(self.life[GEN, m].max()),
+                              "long": float((x[m] > 0.01).mean()), "short": float((x[m] < -0.01).mean())})
+        # timescales: how long each organism holds a position, on average, over its life
+        hold = self.holding_s()[alive]
+        own = (self.count[TRADES] - self.life[TRADES0])[alive]
+        bins = [int((own == 0).sum())]
+        energy_bins = [round(float(eq[alive][own == 0].sum()), 2)]
+        edges = [0, 300, 3600, 21600, 86400, 604800, np.inf]
+        for lo, hi in zip(edges[:-1], edges[1:]):
+            m = (own > 0) & (hold >= lo) & (hold < hi)
+            bins.append(int(m.sum()))
+            energy_bins.append(round(float(eq[alive][m].sum()), 2))
+        g = self.acct[GEAR, alive]
+        gear_bins = [int((g < 1.5).sum()), int(((g >= 1.5) & (g < 4.5)).sum()),
+                     int(((g >= 4.5) & (g < 19.5)).sum()), int((g >= 19.5).sum())]
+        # maps, at most 32 x 32 cells
+        fx, fy = max(1, pl.X // 32), max(1, pl.Y // 32)
+        cell = (self.site_x // fx) * ((pl.Y + fy - 1) // fy) + self.site_y // fy
+        cx, cy = (pl.X + fx - 1) // fx, (pl.Y + fy - 1) // fy
+        energy_map = np.bincount(cell, weights=np.where(alive, eq, 0.0), minlength=cx * cy).reshape(cx, cy)
+        alive_map = np.bincount(cell, weights=alive, minlength=cx * cy).reshape(cx, cy)
+        held = np.bincount(cell, weights=np.abs(x) * alive, minlength=cx * cy).reshape(cx, cy)
+        matter = census_of_matter(self.soup[alive] if alive.any() else self.soup[:1], top=top, table=self.table)
         return {
             "t": self.t, "price": self.price, "price0": self.price0, "sites": self.S,
-            "alive": int(alive.sum()), "alive_by_band": by_band(alive.astype(float)),
-            "energy": float(eq.sum()), "energy_by_band": by_band(eq),
-            "net": float(eq.sum()) - self.injected, "injected": self.injected,
+            "alive": int(alive.sum()), "energy": float(eq[alive].sum()),
+            "net": float(eq[alive].sum()) - self.injected, "injected": self.injected,
             "fees": float(self.acct[FEES].sum()), "funding": float(self.acct[FUNDING].sum()),
             "liquidations": counts["liquidations"],
-            "taken": float(self.flow[:, 0].sum()), "heat": float(self.flow[:, 2].sum()),
-            "long": float((x > 0.01).mean()), "short": float((x < -0.01).mean()),
+            "taken": float(flow[TAKEN]), "lost": float(flow[LOST]), "heat": float(flow[LOST]),
+            "metabolism": float(flow[METABOLISM]), "to_children": float(flow[TO_CHILDREN]),
+            "carcass": float(flow[CARCASS]),
+            "births": counts["births"], "deaths": counts["deaths"],
+            "generation_max": int(gen.max()) if len(gen) else 0,
+            "generation_mean": float(gen.mean()) if len(gen) else 0.0,
+            "lines": int(len(founders)), "top_lines": line_rows,
+            "long": float((x[alive] > 0.01).sum() / n), "short": float((x[alive] < -0.01).sum() / n),
             "mean_abs_exposure": float(np.abs(x[alive]).mean()) if alive.any() else 0.0,
-            "energy_map": energy.round(1).tolist(), "alive_map": living.astype(int).tolist(),
-            "exposure_map": (held / np.maximum(living, 1)).round(3).tolist(),
-            "matter": matter, "copies_per_interaction": counts["copies"] / n,
-            "instructions_per_interaction": counts["instructions"] / n,
-            "interactions_per_tick": counts["interactions"] / max(self.tick, 1),
-            "counts": counts,
+            "timescales": bins, "timescale_energy": energy_bins, "gears": gear_bins,
+            "energy_map": energy_map.round(1).tolist(), "alive_map": alive_map.astype(int).tolist(),
+            "exposure_map": (held / np.maximum(alive_map, 1)).round(3).tolist(),
+            "matter": matter, "counts": counts,
+            "thoughts_per_tick": counts["thoughts"] / max(self.tick, 1),
         }
 
 

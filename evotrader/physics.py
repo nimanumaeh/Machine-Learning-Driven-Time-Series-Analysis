@@ -1,20 +1,27 @@
 """The soup's laws as scalar code, compiled for the CPU (numba) and for CUDA (docs/soup.md).
 
 Every function here acts on one site, or on one pair of sites, and compiles
-unchanged for both targets (numba.extending.register_jitable). A tick of the
-world has two phases. Within a phase no two sites write the same memory, so the
-CPU loops over the sites one by one and a GPU runs them all at once, with the
-same result:
+unchanged for both targets. A tick of the world (one row of market data, at the
+finest resolution there is) has three phases. Within a phase no two sites write
+the same memory, so the CPU loops over the sites one by one and a GPU runs them
+all at once, with the same result:
 
-market       each site alone: the order its matter placed at its latitude's last
-             tick fills at the open, liquidation and funding follow, its senses
-             update if its latitude ticked, a few of its bytes may flip, and it
-             may wake (more often the more energy it has: Kleiber's law) and claim
-             a random neighbor.
-interaction  every woken site whose claims on itself and on its neighbor both won
-             (the highest random priority among all claims on either site) runs
-             their joined tape. A site takes part in at most one interaction per
-             tick: crowding, not a rule, decides who meets whom.
+live    each living organism alone: its order fills at the open, liquidation,
+        funding and the cost of living (a body's upkeep, and Kleiber's law)
+        follow; if its energy is gone it is doomed. Otherwise it senses what is happening now, and its own
+        tape runs on from where it stopped (a few instructions a tick: matter
+        that thinks). It may wish to divide into an empty site next to it, and
+        it may wake (more often the more energy it has) to meet a neighbor.
+birth   the doomed dissolve: their matter returns to nothing and their site to
+        space. A site claimed by a dividing parent becomes its child, as a cell
+        divides: a copy of the parent's tape (with copying errors) and
+        registers, and half of everything it holds, cash, position and margin
+        alike. Only growth leads to birth: energy comes only from the market,
+        and from others. A child takes an empty site, or the site of an organism
+        with less energy than the child is given: the weaker is displaced and
+        dies, and the child eats what it held.
+meet    two neighbors whose claims won run their joined tape: copying, mating,
+        feeding and predation happen here.
 
 Randomness is a pure function of (seed, tick, stream, site), so a world does not
 depend on the order in which its sites are visited, nor on the device.
@@ -32,28 +39,40 @@ from numba.extending import register_jitable
 
 L = 64                                     # bytes of matter per site
 TAPE = 2 * L                               # a joined tape
-STEPS = 1 << 13                            # most instructions an interaction runs
+STEPS = 1 << 13                            # most instructions an interaction of matter alone runs
 OP_LEFT, OP_RIGHT, OP_LEFT1, OP_RIGHT1, OP_DEC, OP_INC, OP_COPY01, OP_COPY10, \
-    OP_OPEN, OP_CLOSE, OP_SENSE, OP_SELF, OP_ACT, OP_TRANSFER = range(1, 15)
+    OP_OPEN, OP_CLOSE, OP_SENSE, OP_SELF, OP_ACT, OP_TRANSFER, OP_GEAR = range(1, 16)
+N_SELF = 3                                 # what E reads: energy, position, leverage
 
-# rows of the account matrix: one exact BTCUSDT perpetual account per site
-WALLET, Q, ENTRY, MARGIN, FEES, FUNDING, LEV, PENDING = range(8)
-N_ACCT = 8
-# rows of the counter matrix
-LIQUIDATIONS, TRADES, ORDERS, INTERACTIONS, INSTRUCTIONS, COPIES = range(6)
-N_COUNT = 6
+# rows of the account matrix: one exact BTCUSDT perpetual account per organism
+WALLET, Q, ENTRY, MARGIN, FEES, FUNDING, LEV, PENDING, GEAR = range(9)
+N_ACCT = 9
+# rows of the counter matrix: totals at each site, over every organism that lived there
+LIQUIDATIONS, TRADES, ORDERS, MEETINGS, THOUGHTS, COPIES, BIRTHS, DEATHS = range(8)
+N_COUNT = 8
+# the organism living at a site: when it was born, its generation, and the site's trades and
+# births when it was born (so that its own are the difference)
+BORN, GEN, TRADES0, BIRTHS0 = range(4)
+N_LIFE = 4
+# its name, its parent's, and its founder's (the first organism of its line)
+ID, PARENT, FOUNDER = range(3)
+N_IDS = 3
+# where energy went, at each site: taken in by bites, given out by bites, lost (heat and
+# digestion), the cost of living, given to children, left behind at death
+TAKEN, GIVEN, LOST, METABOLISM, TO_CHILDREN, CARCASS = range(6)
+N_FLOW = 6
 # columns of the market, one row per tick
 E_T, E_OPEN, E_CLOSE, E_HIGH, E_LOW, E_MARK, E_FUNDING = range(7)
 N_ENV = 7
 # the world's constants
-P_STAKE, P_RATE, P_KLEIBER, P_HEAT, P_DIGESTION, P_QUANTUM, P_MAX_EXPOSURE, P_MAX_LEV, \
-    P_STEP, P_FEE, P_HALF_SPREAD, P_MIN_NOTIONAL = range(12)
-N_FP = 12
-I_SEED, I_XS, I_Y, I_STEPS = range(4)
-N_IP = 4
+P_STAKE, P_RATE, P_KLEIBER, P_HEAT, P_DIGESTION, P_QUANTUM, P_MAX_LEV, P_STEP, P_FEE, \
+    P_HALF_SPREAD, P_MIN_NOTIONAL, P_METABOLISM, P_FLOOR, P_BIRTH_MIN, P_MUTATION, P_UPKEEP, \
+    P_DIVIDE_AT = range(17)
+N_FP = 17
+I_SEED, I_X, I_Y, I_THINK, I_MEET = range(5)
+N_IP = 5
 # independent streams of randomness
-WAKE, PARTNER, KEY, NOISE, NOISE_AT = range(1, 6)
-ACT_NONE = -1                              # no intention this tick
+WAKE, PARTNER, KEY, NOISE, NOISE_AT, BIRTH, BIRTH_KEY, MUTATE, MUTATE_TO = range(1, 10)
 
 _M1 = np.uint64(0xBF58476D1CE4E5B9)
 _M2 = np.uint64(0x94D049BB133111EB)
@@ -348,7 +367,7 @@ def exposure_byte(x, max_exposure):
 
 
 def read_self(s, mark, acct, fp, out):
-    """Interoception: the site's energy and position, as two signed bytes."""
+    """Interoception: the organism's energy, position and leverage, as three signed bytes."""
     eq = equity(s, mark, acct)
     held = 0.0
     x = 0.0
@@ -356,12 +375,13 @@ def read_self(s, mark, acct, fp, out):
         held = eq
         x = acct[Q, s] * mark / max(eq, 1e-9)
     out[0] = energy_byte(held, fp[P_STAKE])
-    out[1] = exposure_byte(x, fp[P_MAX_EXPOSURE])
+    out[1] = exposure_byte(x, fp[P_MAX_LEV])
+    out[2] = to_byte(127.0 * math.log(max(acct[GEAR, s], 1.0)) / math.log(126.0))
 
 
 # --------------------------------------------------------------------- space
 def neighbor(s, dx, dy, Xs, Y):
-    """The site at offset (dx, dy) from s: longitude wraps, the poles reflect."""
+    """The site at offset (dx, dy) from s on a band of latitudes: longitude wraps, the poles reflect."""
     x = s % Xs
     y = s // Xs
     nx = (x + dx + Xs) % Xs
@@ -375,36 +395,277 @@ def neighbor(s, dx, dy, Xs, Y):
     return ny * Xs + nx
 
 
+def torus(s, dx, dy, X, Y):
+    """The site at offset (dx, dy) from s on a torus of X by Y sites."""
+    x = s % X
+    y = s // X
+    return ((y + dy + Y) % Y) * X + (x + dx + X) % X
+
+
+# --------------------------------------------------------------------- thought
+def think(s, steps, soup, regs, sense, mask, selfs, acct, flow, heat, table, expo, gears):
+    """Site s's own matter runs alone for `steps` instructions, from where it stopped.
+
+    The tape is a loop: the instruction pointer and both heads wrap around, so matter
+    runs for as long as it lives, a few instructions a tick. S reads what this site
+    senses now (sense: the market's bytes this tick; mask: which streams exist here,
+    the others read 0), E its own energy, position or leverage. A sets the position it wants
+    (a share of its equity, filled at the next open), L its leverage (1x unless it
+    chooses more).
+    None takes itself as its own argument. Every write costs heat; a site that cannot
+    pay cannot write. Returns (instructions executed, bytes copied).
+    """
+    n = soup.shape[1]
+    ip = regs[s, 0]
+    h0 = regs[s, 1]
+    h1 = regs[s, 2]
+    executed = 0
+    copies = 0
+    for _ in range(steps):
+        c = table[soup[s, ip]]
+        executed += 1
+        if heat > 0.0 and (c == OP_DEC or c == OP_INC or c == OP_COPY01 or c == OP_COPY10
+                           or c == OP_SENSE or c == OP_SELF):
+            if acct[WALLET, s] < heat:                     # no energy, no writing
+                ip += 1
+                if ip == n:
+                    ip = 0
+                continue
+            acct[WALLET, s] -= heat
+            flow[s, LOST] += heat
+        if c == OP_LEFT:                                   # (wrapping without a division)
+            h0 = h0 - 1 if h0 > 0 else n - 1
+        elif c == OP_RIGHT:
+            h0 = h0 + 1 if h0 < n - 1 else 0
+        elif c == OP_LEFT1:
+            h1 = h1 - 1 if h1 > 0 else n - 1
+        elif c == OP_RIGHT1:
+            h1 = h1 + 1 if h1 < n - 1 else 0
+        elif c == OP_DEC:
+            soup[s, h0] = (np.int64(soup[s, h0]) + 255) & 255
+        elif c == OP_INC:
+            soup[s, h0] = (np.int64(soup[s, h0]) + 1) & 255
+        elif c == OP_COPY01:
+            soup[s, h1] = soup[s, h0]
+            copies += 1
+        elif c == OP_COPY10:
+            soup[s, h0] = soup[s, h1]
+            copies += 1
+        elif c == OP_OPEN:
+            if soup[s, h0] == 0:                           # skip to after the matching ]
+                depth = 1
+                j = ip
+                k = 0
+                while k < n - 1 and depth > 0:
+                    j = j + 1 if j < n - 1 else 0
+                    k += 1
+                    cj = table[soup[s, j]]
+                    if cj == OP_OPEN:
+                        depth += 1
+                    elif cj == OP_CLOSE:
+                        depth -= 1
+                if depth == 0:
+                    ip = j
+        elif c == OP_CLOSE:
+            if soup[s, h0] != 0:                           # back to after the matching [
+                depth = 1
+                j = ip
+                k = 0
+                while k < n - 1 and depth > 0:
+                    j = j - 1 if j > 0 else n - 1
+                    k += 1
+                    cj = table[soup[s, j]]
+                    if cj == OP_CLOSE:
+                        depth += 1
+                    elif cj == OP_OPEN:
+                        depth -= 1
+                if depth == 0:
+                    ip = j
+        elif c == OP_SENSE:
+            k = soup[s, h0] % sense.shape[0]
+            soup[s, h0] = sense[k] if mask[s, k] != 0 else 0
+        elif c == OP_SELF:
+            soup[s, h0] = selfs[soup[s, h0] % N_SELF]
+        elif c == OP_ACT:
+            v = np.int64(soup[s, h0]) if h0 != ip else 0
+            acct[PENDING, s] = expo[v]
+        elif c == OP_GEAR:
+            v = np.int64(soup[s, h0]) if h0 != ip else 0
+            acct[GEAR, s] = gears[v]
+        ip += 1
+        if ip == n:
+            ip = 0
+    regs[s, 0] = ip
+    regs[s, 1] = h0
+    regs[s, 2] = h1
+    return executed, copies
+
+
+def meet_tape(tape, steps, sense, mask, self_a, self_b, acct, a, b, act, flow, heat, digestion,
+              quantum, table, gears):
+    """Two organisms meet: their joined tape (a's first) runs once, from its start.
+
+    As in BFF, the program stops at either end of the tape, at an unmatched bracket,
+    or after `steps` instructions. Instructions act for the organism in whose half
+    they sit: A records the position it wants in act (as a byte), L sets its
+    leverage, T moves a bite of energy between the two (positive: takes from the
+    other, negative: gives; only `digestion` of it arrives), and copying between
+    the heads moves matter from one organism to the other.
+    Returns (instructions executed, bytes copied).
+    """
+    n = tape.shape[0]
+    half = n // 2
+    ip = 0
+    h0 = 0
+    h1 = 0
+    copies = 0
+    executed = 0
+    for _ in range(steps):
+        if ip < 0 or ip >= n:
+            break
+        c = table[tape[ip]]
+        executed += 1
+        if heat > 0.0 and (c == OP_DEC or c == OP_INC or c == OP_COPY01 or c == OP_COPY10
+                           or c == OP_SENSE or c == OP_SELF):
+            me = a if ip < half else b
+            if acct[WALLET, me] < heat:
+                ip += 1
+                continue
+            acct[WALLET, me] -= heat
+            flow[me, LOST] += heat
+        if c == OP_LEFT:
+            h0 = (h0 - 1 + n) % n
+        elif c == OP_RIGHT:
+            h0 = (h0 + 1) % n
+        elif c == OP_LEFT1:
+            h1 = (h1 - 1 + n) % n
+        elif c == OP_RIGHT1:
+            h1 = (h1 + 1) % n
+        elif c == OP_DEC:
+            tape[h0] = (np.int64(tape[h0]) + 255) & 255
+        elif c == OP_INC:
+            tape[h0] = (np.int64(tape[h0]) + 1) & 255
+        elif c == OP_COPY01:
+            tape[h1] = tape[h0]
+            copies += 1
+        elif c == OP_COPY10:
+            tape[h0] = tape[h1]
+            copies += 1
+        elif c == OP_OPEN:
+            if tape[h0] == 0:
+                depth = 1
+                j = ip + 1
+                while j < n and depth > 0:
+                    if table[tape[j]] == OP_OPEN:
+                        depth += 1
+                    elif table[tape[j]] == OP_CLOSE:
+                        depth -= 1
+                    j += 1
+                if depth > 0:
+                    break
+                ip = j - 1
+        elif c == OP_CLOSE:
+            if tape[h0] != 0:
+                depth = 1
+                j = ip - 1
+                while j >= 0 and depth > 0:
+                    if table[tape[j]] == OP_CLOSE:
+                        depth += 1
+                    elif table[tape[j]] == OP_OPEN:
+                        depth -= 1
+                    j -= 1
+                if depth > 0:
+                    break
+                ip = j + 1
+        elif c == OP_SENSE:
+            me = a if ip < half else b
+            k = tape[h0] % sense.shape[0]
+            tape[h0] = sense[k] if mask[me, k] != 0 else 0
+        elif c == OP_SELF:
+            if ip < half:
+                tape[h0] = self_a[tape[h0] % N_SELF]
+            else:
+                tape[h0] = self_b[tape[h0] % N_SELF]
+        elif c == OP_ACT:
+            v = np.int64(tape[h0]) if h0 != ip else 0      # never its own argument
+            if ip < half:
+                act[a] = v
+            else:
+                act[b] = v
+        elif c == OP_GEAR:
+            v = np.int64(tape[h0]) if h0 != ip else 0
+            if ip < half:
+                acct[GEAR, a] = gears[v]
+            else:
+                acct[GEAR, b] = gears[v]
+        elif c == OP_TRANSFER:
+            me = a if ip < half else b
+            other = b if ip < half else a
+            v = np.int64(tape[h0]) if h0 != ip else 0
+            if v == 0:
+                pass
+            elif v < 128:                                  # positive: take
+                amount = min(max(acct[WALLET, other], 0.0), quantum * v / 127.0)
+                acct[WALLET, other] -= amount
+                acct[WALLET, me] += amount * digestion
+                flow[me, TAKEN] += amount * digestion
+                flow[other, GIVEN] += amount
+                flow[me, LOST] += amount * (1.0 - digestion)
+            else:                                          # negative: give
+                amount = min(max(acct[WALLET, me], 0.0), quantum * (256.0 - v) / 128.0)
+                acct[WALLET, me] -= amount
+                acct[WALLET, other] += amount * digestion
+                flow[me, GIVEN] += amount
+                flow[other, TAKEN] += amount * digestion
+                flow[me, LOST] += amount * (1.0 - digestion)
+        ip += 1
+    return executed, copies
+
+
 # --------------------------------------------------------------------- one tick
-def market_site(s, tick, r, env, done, band, acct, counts, soup, senses, mask, site_y, due,
-                partner, claimv, br, offsets, noise_cdf, fp, ip_):
-    """The market phase of tick `tick` (row r of env) for site s. Returns its claim (0: none)."""
+def live_site(s, tick, r, env, band, acct, counts, flow, soup, regs, mask, alive, doomed,
+              partner, claimv, target, birthv, divide, offsets, noise_cdf, expo, gears, table, br, fp,
+              ip_, selfs):
+    """Phase 1 of a tick for site s. It writes only s's own state, and reads whether its
+    neighbors are alive (which no one changes in this phase)."""
+    partner[s] = -1
+    claimv[s] = np.uint64(0)
+    target[s] = -1
+    birthv[s] = np.uint64(0)
+    doomed[s] = 0
+    if alive[s] == 0:
+        return
     seed = ip_[I_SEED]
-    # the order its matter placed at its latitude's last tick fills at the open
+    # the order it placed fills at this tick's open, at the leverage it chose
     x = acct[PENDING, s]
-    if due[s] != 0 and x == x:
+    if x == x:
         acct[PENDING, s] = np.nan
         price = env[r, E_OPEN]
-        lv = min(max(math.ceil(abs(x)), 1.0), fp[P_MAX_LEV])
-        acct[LEV, s] = lv
+        lv = acct[GEAR, s]
         e = equity(s, price, acct)
         if not (e > 0.0):
             e = 0.0
         cap = max_notional(lv, br)
-        fill(s, min(max(x * e, -cap), cap) / price, price, lv, acct, counts, fp[P_STEP],
+        fill(s, min(max(x * lv * e, -cap), cap) / price, price, lv, acct, counts, fp[P_STEP],
              fp[P_FEE], fp[P_HALF_SPREAD], fp[P_MIN_NOTIONAL])
+        acct[LEV, s] = lv
         counts[ORDERS, s] += 1
     liquidate(s, env[r, E_HIGH], env[r, E_LOW], acct, counts, br)
+    mark = env[r, E_MARK]
     f = env[r, E_FUNDING]
     if f != 0.0 and f == f:
-        fund(s, f, env[r, E_MARK], acct)
-    # senses, when its latitude ticks; streams that do not exist here read 0
-    y = site_y[s]
-    if done[r, y] != 0:
-        for k in range(senses.shape[1]):
-            senses[s, k] = band[r, y, k] if mask[s, k] != 0 else 0
-    due[s] = done[r, y]                                   # its next order fills at the next open
-    # noise: a few bytes flip
+        fund(s, f, mark, acct)
+    # living costs energy: the upkeep of a body, and Kleiber's three quarters of what it holds
+    e = equity(s, mark, acct)
+    if e > 0.0:
+        cost = min(fp[P_UPKEEP] + fp[P_METABOLISM] * math.sqrt(e) * math.sqrt(math.sqrt(e)), e)
+        acct[WALLET, s] -= cost
+        flow[s, METABOLISM] += cost
+        e = e - cost
+    if not (e > fp[P_FLOOR]):
+        doomed[s] = 1                                      # nothing left to live on
+        return
+    # a few of its bytes may flip
     u = uniform(seed, tick, NOISE, s)
     flips = 0
     while flips < noise_cdf.shape[0] and u > noise_cdf[flips]:
@@ -412,37 +673,150 @@ def market_site(s, tick, r, env, done, band, acct, counts, soup, senses, mask, s
     for j in range(flips):
         z = bits(seed, tick, NOISE_AT, s * 64 + j)
         soup[s, np.int64(z % np.uint64(soup.shape[1]))] = np.uint8((z >> np.uint64(32)) & np.uint64(255))
-    # waking, at a rate set by energy (Kleiber), and claiming a random neighbor
-    partner[s] = -1
-    claimv[s] = np.uint64(0)
-    eq = equity(s, env[r, E_MARK], acct)
-    if eq > 0.0 and offsets.shape[0] > 0:
-        ratio = eq / fp[P_STAKE]
-        kl = fp[P_KLEIBER]
-        if kl == 0.75:
-            w = math.sqrt(ratio) * math.sqrt(math.sqrt(ratio))
-        elif kl == 1.0:
-            w = ratio
-        else:
-            w = ratio ** kl
-        if uniform(seed, tick, WAKE, s) < fp[P_RATE] * w:
-            z = bits(seed, tick, PARTNER, s)
-            o = np.int64(z % np.uint64(offsets.shape[0]))
-            partner[s] = neighbor(s, offsets[o, 0], offsets[o, 1], ip_[I_XS], ip_[I_Y])
+    # its matter thinks
+    read_self(s, mark, acct, fp, selfs)
+    ex, cp = think(s, ip_[I_THINK], soup, regs, band[r, 0], mask, selfs, acct, flow, fp[P_HEAT], table, expo,
+                   gears)
+    counts[THOUGHTS, s] += ex
+    counts[COPIES, s] += cp
+    n_off = offsets.shape[0]
+    if n_off == 0:
+        return
+    X = ip_[I_X]
+    Y = ip_[I_Y]
+    # a body that has grown to the size where bodies divide does so, in half, into a site
+    # next to it (empty, or held by someone weaker: phase 2)
+    divide[s] = 0.5 if e >= fp[P_DIVIDE_AT] else 0.0
+    if divide[s] > 0.0:
+        z = bits(seed, tick, BIRTH, s)
+        o = np.int64(z % np.uint64(n_off))
+        target[s] = torus(s, offsets[o, 0], offsets[o, 1], X, Y)
+        birthv[s] = ((bits(seed, tick, BIRTH_KEY, s) >> np.uint64(32)) << np.uint64(32)) | np.uint64(s + 1)
+    # and it may wake to meet a living neighbor, more often the more energy it has (Kleiber)
+    ratio = e / fp[P_STAKE]
+    kl = fp[P_KLEIBER]
+    if kl == 0.75:
+        w = math.sqrt(ratio) * math.sqrt(math.sqrt(ratio))
+    elif kl == 1.0:
+        w = ratio
+    else:
+        w = ratio ** kl
+    if uniform(seed, tick, WAKE, s) < fp[P_RATE] * w:
+        z = bits(seed, tick, PARTNER, s)
+        o = np.int64(z % np.uint64(n_off))
+        j = torus(s, offsets[o, 0], offsets[o, 1], X, Y)
+        if alive[j] != 0:
+            partner[s] = j
             claimv[s] = ((bits(seed, tick, KEY, s) >> np.uint64(32)) << np.uint64(32)) | np.uint64(s + 1)
-    return claimv[s]
 
 
-def interact_site(s, buf, r, env, acct, counts, flow, soup, senses, act, partner, claimv, claims,
-                  table, expo, fp, ip_, tape, sa, sb):
-    """The interaction phase for the pair site s started, if both its claims won."""
+def die(s, mark, acct, counts, flow, soup, regs, alive, doomed, ids):
+    """Death: the organism's matter returns to nothing, its site to space; what it held is lost."""
+    flow[s, CARCASS] += equity(s, mark, acct)              # (negative: a debt forgiven)
+    acct[WALLET, s] = 0.0
+    acct[Q, s] = 0.0
+    acct[ENTRY, s] = 0.0
+    acct[MARGIN, s] = 0.0
+    acct[PENDING, s] = np.nan
+    acct[GEAR, s] = 1.0
+    acct[LEV, s] = 1.0
+    for k in range(soup.shape[1]):
+        soup[s, k] = 0
+    regs[s, 0] = 0
+    regs[s, 1] = 0
+    regs[s, 2] = 0
+    ids[ID, s] = np.uint64(0)
+    ids[PARENT, s] = np.uint64(0)
+    ids[FOUNDER, s] = np.uint64(0)
+    alive[s] = 0
+    doomed[s] = 0
+    counts[DEATHS, s] += 1
+
+
+def birth_site(s, tick, buf, r, env, acct, counts, flow, soup, regs, alive, doomed, births, birthv,
+               divide, ids, life, fp, ip_):
+    """Phase 2 for site s: the doomed die; a site claimed by a parent is born into.
+
+    A child takes an empty site, or the site of an organism with less energy than the
+    child is given: the weaker is displaced and dies, and the child eats what it held
+    (only `digestion` of it arrives). An organism dividing this tick holds its ground. A parent claims one site a tick, and only that site's thread
+    reads or writes the parent here."""
+    births[1 - buf, s] = np.uint64(0)                     # clean for the next tick
+    mark = env[r, E_MARK]
+    if alive[s] != 0 and doomed[s] != 0:
+        die(s, mark, acct, counts, flow, soup, regs, alive, doomed, ids)
+    v = births[buf, s]
+    if v == np.uint64(0):
+        return
+    p = np.int64(v & np.uint64(0xFFFFFFFF)) - 1
+    if birthv[p] != v:
+        return
+    share = divide[p]
+    give = share * equity(p, mark, acct)
+    if not (give >= fp[P_BIRTH_MIN]):
+        return                                             # too little to live on: no child
+    eaten = 0.0
+    if alive[s] != 0:
+        occupant = equity(s, mark, acct)
+        if birthv[s] != np.uint64(0) or not (give > occupant):
+            return                                         # it holds its ground
+        if occupant > 0.0:                                 # the weaker is displaced, and eaten
+            eaten = occupant * fp[P_DIGESTION]
+            flow[s, CARCASS] -= occupant                   # (die() counts it all lost; part is eaten)
+            flow[s, LOST] += occupant - eaten
+        die(s, mark, acct, counts, flow, soup, regs, alive, doomed, ids)
+    # the child takes its share of everything the parent holds: cash, position and margin
+    w = share * acct[WALLET, p]
+    q = share * acct[Q, p]
+    m = share * acct[MARGIN, p]
+    acct[WALLET, p] -= w
+    acct[Q, p] -= q
+    acct[MARGIN, p] -= m
+    flow[p, TO_CHILDREN] += give
+    seed = ip_[I_SEED]
+    mu = fp[P_MUTATION]
+    n = soup.shape[1]
+    for k in range(n):                                     # a copy, with copying errors
+        b = soup[p, k]
+        if mu > 0.0 and uniform(seed, tick, MUTATE, s * 256 + k) < mu:
+            b = np.uint8(bits(seed, tick, MUTATE_TO, s * 256 + k) >> np.uint64(56))
+        soup[s, k] = b
+    regs[s, 0] = regs[p, 0]                                # and goes on thinking where the parent was
+    regs[s, 1] = regs[p, 1]
+    regs[s, 2] = regs[p, 2]
+    acct[WALLET, s] = w + eaten
+    flow[s, TAKEN] += eaten
+    acct[Q, s] = q
+    acct[ENTRY, s] = acct[ENTRY, p]
+    acct[MARGIN, s] = m
+    acct[PENDING, s] = acct[PENDING, p]
+    acct[GEAR, s] = acct[GEAR, p]
+    acct[LEV, s] = acct[LEV, p]
+    ids[ID, s] = (np.uint64(tick) << np.uint64(24)) | np.uint64(s)
+    ids[PARENT, s] = ids[ID, p]
+    ids[FOUNDER, s] = ids[FOUNDER, p]
+    life[BORN, s] = tick
+    life[GEN, s] = life[GEN, p] + 1
+    life[TRADES0, s] = counts[TRADES, s]
+    life[BIRTHS0, s] = counts[BIRTHS, s]
+    alive[s] = 1
+    counts[BIRTHS, p] += 1
+
+
+def meet_site(s, tick, buf, r, env, band, acct, counts, flow, soup, mask, act, partner, claimv, claims, alive,
+              life, table, expo, gears, fp, ip_, tape, sa, sb):
+    """Phase 3: the meeting site s started, if both its claims won and both are still alive."""
     claims[1 - buf, s] = np.uint64(0)                     # clean for the next tick
     j = partner[s]
     if j < 0:
         return
     v = claimv[s]
     if claims[buf, s] != v or claims[buf, j] != v:
-        return                                            # crowded out this tick
+        return                                             # crowded out this tick
+    if alive[s] == 0 or alive[j] == 0:
+        return
+    if life[BORN, j] == tick:
+        return                                             # its partner was displaced by a newborn
     mark = env[r, E_MARK]
     read_self(s, mark, acct, fp, sa)
     read_self(j, mark, acct, fp, sb)
@@ -450,35 +824,45 @@ def interact_site(s, buf, r, env, acct, counts, flow, soup, senses, act, partner
     for k in range(n):
         tape[k] = soup[s, k]
         tape[n + k] = soup[j, k]
-    e, c = run_tape(tape, ip_[I_STEPS], senses[s], senses[j], sa, sb, acct[WALLET], s, j, act, flow,
-                    fp[P_HEAT], fp[P_DIGESTION], fp[P_QUANTUM], table)
+    act[s] = -1
+    act[j] = -1
+    e, c = meet_tape(tape, ip_[I_MEET], band[r, 0], mask, sa, sb, acct, s, j, act, flow, fp[P_HEAT],
+                     fp[P_DIGESTION], fp[P_QUANTUM], table, gears)
     for k in range(n):
         soup[s, k] = tape[k]
         soup[j, k] = tape[n + k]
-    if act[s] >= 0:                                       # an intention, filled at the next tick
+    if act[s] >= 0:
         acct[PENDING, s] = expo[act[s]]
         act[s] = -1
     if act[j] >= 0:
         acct[PENDING, j] = expo[act[j]]
         act[j] = -1
-    counts[INTERACTIONS, s] += 1
-    counts[INSTRUCTIONS, s] += e
+    counts[MEETINGS, s] += 1
+    counts[THOUGHTS, s] += e
     counts[COPIES, s] += c
 
 
-def cpu_ticks(r0, r1, tick0, env, done, band, acct, counts, flow, soup, senses, mask, site_y, due,
-              partner, claimv, claims, act, table, expo, br, offsets, noise_cdf, fp, ip_, tape, sa, sb):
+def cpu_life(r0, r1, tick0, env, band, acct, counts, flow, soup, regs, mask, alive, doomed,
+             partner, claimv, claims, target, birthv, births, divide, act, ids, life, offsets, noise_cdf,
+             expo, gears, table, br, fp, ip_, tape, sa, sb, selfs):
     """Rows r0..r1 of env, one tick each, on the CPU (tick number tick0 + r).
 
-    tape (2L,), sa and sb (2,) uint8: work space for a joined tape and two selves.
+    tape (2L,), sa, sb and selfs (N_SELF,) uint8: work space.
     """
     S = soup.shape[0]
     for r in range(r0, r1):
         tick = tick0 + r
         buf = tick & 1
         for s in range(S):
-            v = market_site(s, tick, r, env, done, band, acct, counts, soup, senses, mask, site_y, due,
-                            partner, claimv, br, offsets, noise_cdf, fp, ip_)
+            live_site(s, tick, r, env, band, acct, counts, flow, soup, regs, mask, alive, doomed,
+                      partner, claimv, target, birthv, divide, offsets, noise_cdf, expo, gears, table, br,
+                      fp, ip_, selfs)
+            v = birthv[s]
+            if v != np.uint64(0):
+                j = target[s]
+                if v > births[buf, j]:
+                    births[buf, j] = v
+            v = claimv[s]
             if v != np.uint64(0):
                 j = partner[s]
                 if v > claims[buf, s]:
@@ -486,8 +870,11 @@ def cpu_ticks(r0, r1, tick0, env, done, band, acct, counts, flow, soup, senses, 
                 if v > claims[buf, j]:
                     claims[buf, j] = v
         for s in range(S):
-            interact_site(s, buf, r, env, acct, counts, flow, soup, senses, act, partner, claimv, claims,
-                          table, expo, fp, ip_, tape, sa, sb)
+            birth_site(s, tick, buf, r, env, acct, counts, flow, soup, regs, alive, doomed, births, birthv,
+                       divide, ids, life, fp, ip_)
+        for s in range(S):
+            meet_site(s, tick, buf, r, env, band, acct, counts, flow, soup, mask, act, partner, claimv, claims,
+                      alive, life, table, expo, gears, fp, ip_, tape, sa, sb)
 
 
 # --------------------------------------------------------------------- matter alone
@@ -551,7 +938,8 @@ def cpu_epochs(e0, e1, seed, wake, soup, offsets, Xs, Y, partner, claimv, claims
 # --------------------------------------------------------------------- compiling the laws
 LAWS = ("mix", "bits", "uniform", "run_tape", "sign", "tier", "max_notional", "equity", "fill",
         "liquidate", "fund", "rint", "to_byte", "energy_byte", "exposure_byte", "read_self", "neighbor",
-        "market_site", "interact_site", "bff_claim", "bff_interact")
+        "torus", "think", "meet_tape", "live_site", "die", "birth_site", "meet_site", "bff_claim",
+        "bff_interact")
 
 
 def target(name, decorate, loops=(), compile_loop=None, special=None):
@@ -574,11 +962,12 @@ def target(name, decorate, loops=(), compile_loop=None, special=None):
     return mod
 
 
-# The CPU: the laws inlined into the loops (a call per site per tick would cost more than
-# most laws), except those called only once an interaction starts, which run long enough
-# not to mind; and no reference counting anywhere (passing arrays around would otherwise
-# cost tens of nanoseconds per site per tick in atomic increments).
+# The CPU: the small laws inlined into the loops (a call per site per tick would cost more
+# than they do); the interpreters and whole phases called, since they run long enough not
+# to mind; and no reference counting anywhere (passing arrays around would otherwise cost
+# tens of nanoseconds per site per tick in atomic increments).
+_CALLED = ("run_tape", "read_self", "think", "meet_tape")
 cpu = target("evotrader.physics.cpu", lambda f: register_jitable(inline="always")(f),
-             loops=("cpu_ticks", "cpu_epochs"),
+             loops=("cpu_life", "cpu_epochs"),
              compile_loop=lambda f: njit(cache=True, _nrt=False)(f),
-             special={law: (lambda f: register_jitable(_nrt=False)(f)) for law in ("run_tape", "read_self")})
+             special={law: (lambda f: register_jitable(_nrt=False)(f)) for law in _CALLED})
