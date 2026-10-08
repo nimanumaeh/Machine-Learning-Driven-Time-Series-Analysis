@@ -7,7 +7,7 @@ money split into children. Nothing here touches a real account.
 - `docs/data.md`: what the arena is made of: the exact data streams, which years, and how rows become a world.
 - `docs/relevance-realization-design.md`: the theory and the math of the relevance-realizing agents.
 - `docs/planet.md`: the planet made of 1-second BTC data, and the smallest Vervaekean organisms that live on it.
-- `docs/soup.md`: a soup of living matter on the same planet, where nothing is designed and BTC is the sun.
+- `docs/soup.md`: a soup of organisms that are nothing but bytes: they think on their own, pay to live, divide and die, and can grow only by trading.
 - `docs/gpu.md`: the soup on a GPU, and on cloud GPUs through Modal.
 
 ## Layers
@@ -25,7 +25,7 @@ money split into children. Nothing here touches a real account.
 | Planet | `planet.py` | a world made of the market: latitude is timescale (1 second at the equator to 1 day at the pole), longitude decides which senses exist; observatories and markers are built by its inhabitants |
 | Life | `life.py` | very many minimal organisms as array columns: an exact account as body, self-made organs kept alive by salience, two opponent dials, a learned gate into a higher-order mode that rebuilds organs, migrates and builds |
 | Watching | `planet_run.py`, `viewer.py` | censuses of life over time, checkpoints, and one self-contained HTML page per run |
-| Soup | `soup.py` | matter, space, time, energy and a few physical laws (Kleiber, Landauer, digestion); replication, death, predation and trading are left to emerge |
+| Soup | `soup.py` | organisms that are 64 bytes of matter and one exact account: they think every tick, pay to live (Kleiber, Landauer), divide when large, take over weaker neighbors, choose their own leverage; energy enters only through trading |
 | Soup physics | `physics.py`, `weather.py` | the soup's laws written once as scalar code, compiled for the CPU and for CUDA; the weather matter feels, compiled for chunks of rows |
 | GPU | `gpu.py`, `../modal_app.py` | the same world on a CUDA GPU, every site at once; cloud GPUs through Modal (`docs/gpu.md`) |
 | Transplant | `transplant.py` | lift any matter out of a soup and run it on unseen data: its positions are its strategy |
@@ -59,15 +59,17 @@ python -m evotrader view --run runs/planet                 # runs/planet/planet.
 The soup lives on the same planet, on 1-second or minute data (needs `pip install numba`):
 
 ```bash
-python -m evotrader soup --minutes --from 2021-01-01 --until 2025-01-01 --run runs/soup \
-    --heat 0.0001 --digestion 0.8              # Landauer heat, lossy predation
+python -m evotrader soup --minutes --from 2021-01-01 --until 2025-01-01 --run runs/soup
 python -m evotrader soup ... --device gpu      # the same world on a CUDA GPU (pip install "numba-cuda[cu12]")
+python -m evotrader view --run runs/soup       # its census page
 python experiments/soup_emergence.py           # does life start from random bytes, with no market?
 modal run modal_app.py::selftest               # on cloud GPUs, from your computer: docs/gpu.md
 ```
 
-- `--width` sets the number of longitudes; the 8 latitudes are the timescales.
-- `--population` is the floor below which newcomers arrive, and `--place-capacity` how many organisms a place holds at normal liquidity.
+- `--width` and `--height` set the torus. Every organism starts at the finest tick of the data; longer timescales are what its matter builds.
+- `--metabolism`, `--upkeep`, `--divide-at`, `--cycle`, `--meetings` and `--bite` are the economy's dials (`docs/soup.md` §1).
+
+The planet's own options: `--population` is the floor below which newcomers arrive, and `--place-capacity` how many organisms a place holds at normal liquidity.
 
 Offline, there are two ways to try the machinery on a synthetic market with a planted effect (or with `--null`, without one):
 

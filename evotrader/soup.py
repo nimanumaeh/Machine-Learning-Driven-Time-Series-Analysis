@@ -58,7 +58,7 @@ from .physics import (BIRTHS, BORN, CARCASS, COPIES, DEATHS, E_CLOSE, E_MARK, E_
                       LIQUIDATIONS, LOST, MARGIN, MEETINGS, METABOLISM, N_ACCT, N_COUNT, N_FLOW, N_FP,
                       N_IDS, N_IP, N_LIFE, N_SELF, ORDERS, P_BIRTH_MIN, P_DIGESTION, P_FEE, P_FLOOR,
                       P_HALF_SPREAD, P_HEAT, P_KLEIBER, P_MAX_LEV, P_METABOLISM, P_MIN_NOTIONAL,
-                      P_MUTATION, P_QUANTUM, P_RATE, P_STAKE, P_STEP, P_UPKEEP, P_DIVIDE_AT, PENDING, Q,
+                      P_MUTATION, P_QUANTUM, P_RATE, P_STAKE, P_STEP, P_UPKEEP, P_DIVIDE_AT, P_CYCLE, PENDING, Q,
                       STEPS, TAKEN,
                       THOUGHTS, TO_CHILDREN, TRADES, TRADES0, WALLET, cpu, run_tape)
 from .planet import REGIONS
@@ -368,23 +368,28 @@ class Soup:
                        bodies cost more to keep than one large one
       floor            an organism whose equity falls to this (USDT) dies
       birth_min        a child needs at least this much (USDT) to be born
-      divide_at        a body that grows to this much energy (USDT) divides in half (as cells
-                       do): success becomes offspring; 0 means two starting stakes
+      divide_at        a body holding at least this much energy (USDT) may divide in half (as
+                       cells do), into an empty site next to it or over a neighbor holding less
+                       than the child would: success becomes offspring; 0 means two stakes
+      cycle_days       how often a body at one stake tries to divide (more often the more it
+                       holds, Kleiber); 0: every tick
       mutation         chance each byte is miscopied when a parent divides
       noise            chance a byte flips, per byte per day
       think            instructions an organism's matter runs each tick
-      meet, meetings   instructions a meeting runs; organisms waking to meet a neighbor
-                       per tick, as a share of all sites, at one stake (Kleiber)
+      meet, meetings   instructions a meeting runs; meetings an organism holding one stake
+                       starts a day (more the more it holds: Kleiber)
       heat             energy (USDT) each byte written costs (Landauer)
-      digestion, quantum  share of a bite that arrives; the most one bite moves (USDT)
+      digestion, quantum  share of a bite that arrives; the most one bite moves (USDT): 0, T
+                       moves nothing, and energy passes between organisms only when a child
+                       takes over a weaker neighbor's site
     The world runs on the CPU, or on a GPU after to_gpu() (gpu.py): the same laws, the
     same random numbers, the same world.
     """
 
     def __init__(self, cfg, width=64, height=64, step_s=60, seed=0, occupancy=0.5, think=32, meet=128,
-                 meetings=1 / 16, metabolism_days=365.0, upkeep=1.0, floor=1.0, birth_min=100.0,
-                 divide_at=0.0, mutation=1 / 64,
-                 noise=1e-3, heat=2e-5, digestion=0.8, quantum=1.0, kleiber=0.75, matter=None,
+                 meetings=90.0, metabolism_days=365.0, upkeep=1.0, floor=1.0, birth_min=100.0,
+                 divide_at=0.0, cycle_days=1.0, mutation=1 / 64,
+                 noise=1e-3, heat=2e-5, digestion=0.8, quantum=0.0, kleiber=0.75, matter=None,
                  layout="symmetric", geography_seed=None):
         self.cfg = cfg
         self.seed = int(seed)
@@ -397,6 +402,7 @@ class Soup:
         self.metabolism_days, self.floor, self.birth_min = float(metabolism_days), float(floor), float(birth_min)
         self.upkeep = float(upkeep)
         self.divide_at = float(divide_at) if divide_at else 2.0 * float(cfg.initial_capital)
+        self.cycle_days = float(cycle_days)
         self.mutation, self.noise, self.heat = float(mutation), float(noise), float(heat)
         self.digestion, self.quantum = float(digestion), float(quantum)
         self.layout = layout
@@ -456,10 +462,11 @@ class Soup:
         self.fp = np.zeros(N_FP)
         self.fp[[P_STAKE, P_RATE, P_KLEIBER, P_HEAT, P_DIGESTION, P_QUANTUM, P_MAX_LEV, P_STEP, P_FEE,
                  P_HALF_SPREAD, P_MIN_NOTIONAL, P_METABOLISM, P_FLOOR, P_BIRTH_MIN, P_MUTATION, P_UPKEEP,
-                 P_DIVIDE_AT]] = (
-            self.stake, self.meetings, self.kleiber, self.heat, self.digestion, self.quantum,
+                 P_DIVIDE_AT, P_CYCLE]] = (
+            self.stake, self.meetings * day, self.kleiber, self.heat, self.digestion, self.quantum,
             cfg.max_leverage, cfg.qty_step, cfg.taker_fee, cfg.half_spread, cfg.min_notional,
-            k_day * day, self.floor, self.birth_min, self.mutation, self.upkeep * day, self.divide_at)
+            k_day * day, self.floor, self.birth_min, self.mutation, self.upkeep * day, self.divide_at,
+            day / self.cycle_days if self.cycle_days > 0 else np.inf)
         self.ip = np.zeros(N_IP, np.int64)
         self.ip[[I_SEED, I_X, I_Y, I_THINK, I_MEET]] = (self.seed, self.X, self.Y, self.think_steps,
                                                         self.meet_steps)

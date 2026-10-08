@@ -1030,8 +1030,8 @@ td.code { font-family: var(--mono); font-size: 12px; word-break: break-all; lett
     <p>Living costs energy every tick: an upkeep for having a body, and more the more it holds (Kleiber's three
        quarters). Energy enters the world only through trading. An organism that runs out dies; one that grows to the
        size where bodies divide splits in half into a neighboring site, its child carrying a copy of its matter with
-       copying errors, and a child may displace and eat a weaker neighbor. Neighbors also meet, and their joined matter
-       can copy code and move energy between them.</p>
+       copying errors, and a child may take over the site of a neighbor holding less than it. Neighbors also meet, and
+       their joined matter can copy code between them (and, if bites are on, move energy).</p>
     <p>How long an organism holds a position is its age over the trades it has made; every organism starts at the
        world's finest tick, and any longer timescale is one its matter found. A program is shown as its instructions:
        <code>&lt; &gt;</code> and <code>{ }</code> move the two heads, <code>+ -</code> change a byte, <code>. ,</code> copy
@@ -1206,7 +1206,7 @@ td.code { font-family: var(--mono); font-size: 12px; word-break: break-all; lett
       const move = f.price / f.price0 - 1;
       set("alive", fmt(f.alive), `of ${fmt(f.sites)} sites; ${fmt(f.births)} born, ${fmt(f.deaths)} died`);
       set("lines", fmt(f.lines), `deepest ${fmt(f.generation_max)} generations (mean ${fmt(f.generation_mean, 1)})`);
-      set("energy", fmt(f.energy), `net ${signed(f.net)}; in BTC ${signed(hold[i])}`, f.net >= 0 ? "pos" : "neg");
+      set("energy", fmt(f.energy), `net ${signed(f.net)}; holding BTC: ${signed(hold[i])}`, f.net >= 0 ? "pos" : "neg");
       set("costs", `${fmt(f.fees)} · ${fmt(f.metabolism)}`, `heat ${fmt(f.lost)}; ${fmt(f.liquidations)} liquidations`);
       set("pos", `${fmt(100 * f.long)}% · ${fmt(100 * f.short)}%`, `mean |exposure| ${fmt(f.mean_abs_exposure, 2)}`);
       set("btc", fmt(f.price), `${pct(move)} since the start`, move >= 0 ? "pos" : "neg");

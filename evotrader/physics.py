@@ -67,12 +67,12 @@ N_ENV = 7
 # the world's constants
 P_STAKE, P_RATE, P_KLEIBER, P_HEAT, P_DIGESTION, P_QUANTUM, P_MAX_LEV, P_STEP, P_FEE, \
     P_HALF_SPREAD, P_MIN_NOTIONAL, P_METABOLISM, P_FLOOR, P_BIRTH_MIN, P_MUTATION, P_UPKEEP, \
-    P_DIVIDE_AT = range(17)
-N_FP = 17
+    P_DIVIDE_AT, P_CYCLE = range(18)
+N_FP = 18
 I_SEED, I_X, I_Y, I_THINK, I_MEET = range(5)
 N_IP = 5
 # independent streams of randomness
-WAKE, PARTNER, KEY, NOISE, NOISE_AT, BIRTH, BIRTH_KEY, MUTATE, MUTATE_TO = range(1, 10)
+WAKE, PARTNER, KEY, NOISE, NOISE_AT, BIRTH, BIRTH_KEY, MUTATE, MUTATE_TO, DIVIDE = range(1, 11)
 
 _M1 = np.uint64(0xBF58476D1CE4E5B9)
 _M2 = np.uint64(0x94D049BB133111EB)
@@ -684,15 +684,7 @@ def live_site(s, tick, r, env, band, acct, counts, flow, soup, regs, mask, alive
         return
     X = ip_[I_X]
     Y = ip_[I_Y]
-    # a body that has grown to the size where bodies divide does so, in half, into a site
-    # next to it (empty, or held by someone weaker: phase 2)
-    divide[s] = 0.5 if e >= fp[P_DIVIDE_AT] else 0.0
-    if divide[s] > 0.0:
-        z = bits(seed, tick, BIRTH, s)
-        o = np.int64(z % np.uint64(n_off))
-        target[s] = torus(s, offsets[o, 0], offsets[o, 1], X, Y)
-        birthv[s] = ((bits(seed, tick, BIRTH_KEY, s) >> np.uint64(32)) << np.uint64(32)) | np.uint64(s + 1)
-    # and it may wake to meet a living neighbor, more often the more energy it has (Kleiber)
+    # the more energy it has, the more often it acts on its neighbors (Kleiber)
     ratio = e / fp[P_STAKE]
     kl = fp[P_KLEIBER]
     if kl == 0.75:
@@ -701,6 +693,16 @@ def live_site(s, tick, r, env, band, acct, counts, flow, soup, regs, mask, alive
         w = ratio
     else:
         w = ratio ** kl
+    # a body large enough to divide tries to, about once a cell cycle: in half, into a site
+    # next to it (empty, or held by someone weaker than the child: phase 2)
+    divide[s] = 0.0
+    if e >= fp[P_DIVIDE_AT] and uniform(seed, tick, DIVIDE, s) < fp[P_CYCLE] * w:
+        divide[s] = 0.5
+        z = bits(seed, tick, BIRTH, s)
+        o = np.int64(z % np.uint64(n_off))
+        target[s] = torus(s, offsets[o, 0], offsets[o, 1], X, Y)
+        birthv[s] = ((bits(seed, tick, BIRTH_KEY, s) >> np.uint64(32)) << np.uint64(32)) | np.uint64(s + 1)
+    # and it may wake to meet a living neighbor
     if uniform(seed, tick, WAKE, s) < fp[P_RATE] * w:
         z = bits(seed, tick, PARTNER, s)
         o = np.int64(z % np.uint64(n_off))
@@ -738,9 +740,10 @@ def birth_site(s, tick, buf, r, env, acct, counts, flow, soup, regs, alive, doom
     """Phase 2 for site s: the doomed die; a site claimed by a parent is born into.
 
     A child takes an empty site, or the site of an organism with less energy than the
-    child is given: the weaker is displaced and dies, and the child eats what it held
-    (only `digestion` of it arrives). An organism dividing this tick holds its ground. A parent claims one site a tick, and only that site's thread
-    reads or writes the parent here."""
+    child is given: the weaker is displaced and dies, and the child takes over what it
+    held (nothing is lost: space changes hands, energy does not vanish). An organism
+    dividing this tick holds its ground. A parent claims one site a tick, and only that
+    site's thread reads or writes the parent here."""
     births[1 - buf, s] = np.uint64(0)                     # clean for the next tick
     mark = env[r, E_MARK]
     if alive[s] != 0 and doomed[s] != 0:
@@ -760,10 +763,9 @@ def birth_site(s, tick, buf, r, env, acct, counts, flow, soup, regs, alive, doom
         occupant = equity(s, mark, acct)
         if birthv[s] != np.uint64(0) or not (give > occupant):
             return                                         # it holds its ground
-        if occupant > 0.0:                                 # the weaker is displaced, and eaten
-            eaten = occupant * fp[P_DIGESTION]
-            flow[s, CARCASS] -= occupant                   # (die() counts it all lost; part is eaten)
-            flow[s, LOST] += occupant - eaten
+        if occupant > 0.0:                                 # the weaker is displaced; the child takes over
+            eaten = occupant                               # what it held (closed at the mark)
+            flow[s, CARCASS] -= occupant                   # (die() counts it as left behind)
         die(s, mark, acct, counts, flow, soup, regs, alive, doomed, ids)
     # the child takes its share of everything the parent holds: cash, position and margin
     w = share * acct[WALLET, p]

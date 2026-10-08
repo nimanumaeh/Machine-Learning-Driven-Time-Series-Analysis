@@ -1,8 +1,8 @@
 """Reverse engineering by transplant: an organism is code, so the organism is the strategy.
 
 Lift an organism out of a soup (its tape, where its thought had got to, the leverage
-it had chosen), plant it alone in a sandbox world with the same physics and the
-senses its birthplace offered, switch evolution off (no noise, no mutation, no
+it had chosen, the position it held), plant it alone in a sandbox world with the
+same physics and the senses its birthplace offered, switch evolution off (no noise, no mutation, no
 meetings, no division) and, unless asked, the cost of living too, and let it live
 through market data it has never seen. Its positions over time are its strategy;
 its P&L there is the test; how its positions move with what it senses says what
@@ -13,7 +13,7 @@ about it has to be understood to be run.
 import numpy as np
 
 from .data import C
-from .physics import BORN, FEES, FOUNDER, FUNDING, GEAR, GEN, LOST, METABOLISM, TRADES, TRADES0
+from .physics import BORN, FEES, FOUNDER, FUNDING, GEAR, GEN, LOST, METABOLISM, PENDING, TRADES, TRADES0
 from .selfmade import RECEPTORS
 from .soup import Soup
 
@@ -33,8 +33,9 @@ def sandbox(world, s, matter=None, sites=1, seed=0, living=False):
     """`sites` copies of an organism alone, with the senses of site s and the same physics.
 
     By default the organism is the one living at site s, as it is: its tape, its
-    registers (where its thought had got to) and the leverage it had chosen. Given
-    `matter`, that matter is planted instead, starting to think at its first byte.
+    registers (where its thought had got to), the leverage it had chosen, and the
+    position it held, as a share of its equity (taken at the first open). Given
+    `matter`, that matter is planted instead, flat, starting to think at its first byte.
     Evolution is off, and so (unless `living`) is the cost of living: what it earns
     or loses is its trading.
     """
@@ -50,6 +51,9 @@ def sandbox(world, s, matter=None, sites=1, seed=0, living=False):
     if own:
         sb.regs[:] = world.regs[s]
         sb.acct[GEAR] = world.acct[GEAR, s]
+        x = float(world.exposure([s])[0])
+        if x != 0.0:
+            sb.acct[PENDING] = np.clip(x / sb.acct[GEAR], -1.0, 1.0)     # the same exposure, at its leverage
     return sb
 
 

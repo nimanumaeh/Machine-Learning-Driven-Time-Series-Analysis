@@ -112,8 +112,10 @@ def run_soup(soup, blocks, run_dir, census_every_s=1800, checkpoint_every_s=600,
     if given, runs after each save (to commit a cloud volume, say). Rows the world
     has already lived through are skipped, so a resumed run can be fed the same
     stream from its start. Stops when the blocks run out, after max_rows new rows,
-    after max_wall_s seconds of wall time, or on Ctrl-C or SIGTERM. Returns
-    (rows lived, whether the stream ran out).
+    after max_wall_s seconds of wall time, or on Ctrl-C or SIGTERM (once the chunk
+    being lived is done, so that what is saved is one moment of the world). Returns
+    (rows lived, finished): True if the stream ran out, False if a limit stopped it,
+    None if it was interrupted.
     """
     os.makedirs(run_dir, exist_ok=True)
     ckpt = os.path.join(run_dir, "planet.pkl")
@@ -128,10 +130,13 @@ def run_soup(soup, blocks, run_dir, census_every_s=1800, checkpoint_every_s=600,
         if on_save is not None:
             on_save()
 
-    try:
-        old_term = signal.signal(signal.SIGTERM, _interrupt)
-    except ValueError:                                       # not the main thread
-        old_term = None
+    stop = []
+    handlers = {}
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        try:
+            handlers[sig] = signal.signal(sig, lambda signum, frame: stop.append(signum))
+        except ValueError:                                   # not the main thread
+            pass
     try:
         with open(os.path.join(run_dir, "census.jsonl"), "a") as out:
             for block in blocks:
@@ -162,18 +167,20 @@ def run_soup(soup, blocks, run_dir, census_every_s=1800, checkpoint_every_s=600,
                     if time.time() - last_save >= checkpoint_every_s:
                         keep()
                         last_save = time.time()
+                    if stop:
+                        log("\ninterrupted; saving the world")
+                        finished = None
+                        raise _Enough
                     if (max_rows is not None and n >= max_rows) or \
                             (max_wall_s is not None and time.time() - start >= max_wall_s):
                         raise _Enough
             finished = True
     except _Enough:
         pass
-    except KeyboardInterrupt:
-        log("\ninterrupted; saving the world")
     finally:
         keep()
-        if old_term is not None:
-            signal.signal(signal.SIGTERM, old_term)
+        for sig, old in handlers.items():
+            signal.signal(sig, old)
     return n, finished
 
 

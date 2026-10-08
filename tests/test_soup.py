@@ -189,6 +189,7 @@ def world(width=3, height=3, occupancy=1.0, matter=None, **kw):
     kw.setdefault("noise", 0.0)
     kw.setdefault("mutation", 0.0)
     kw.setdefault("meetings", 0.0)
+    kw.setdefault("cycle_days", 0.0)                              # a body that may divide tries every tick
     if matter is None:
         matter = np.full(L, 128, np.uint8)                        # 128 is inert
     return Soup(Config(), width=width, height=height, step_s=60, seed=0, occupancy=occupancy, matter=matter, **kw)
@@ -304,7 +305,7 @@ def test_a_child_displaces_and_eats_a_weaker_neighbor_but_not_a_stronger_one():
     born = np.nonzero(w.life[physics.GEN] == 1)[0]
     assert len(born) == 1 and w.counts["deaths"] == 1
     c = born[0]
-    assert w.wallet[c] == pytest.approx(1500.0 + 0.8 * 400.0)     # half the parent, and 80% of the eaten
+    assert w.wallet[c] == pytest.approx(1500.0 + 400.0)           # half the parent, and all the displaced held
     assert w.equity()[w.alive.astype(bool)].sum() + w.flow[:, physics.LOST].sum() == pytest.approx(w.injected)
     strong = world(upkeep=0.0, metabolism_days=float("inf"))
     strong.acct[physics.WALLET] = 1600.0                           # neighbors stronger than half of 3000
@@ -339,21 +340,23 @@ def test_meetings_bite_with_digestion_and_copy_between_organisms():
     act = np.full(2, -1, np.int16)
     band = np.zeros(NS, np.uint8)
     sa, sb = np.zeros(physics.N_SELF, np.uint8), np.zeros(physics.N_SELF, np.uint8)
+    assert w.quantum == 0.0                                        # by default a bite moves nothing
+    physics.meet_tape(tape_.copy(), 64, band, w.mask, sa, sb, w.acct, 0, 1, act, w.flow, 0.0, 0.8, w.quantum,
+                      w.table, w.gears)
+    assert w.wallet.tolist() == [1000.0, 1000.0]
     physics.meet_tape(tape_, 64, band, w.mask, sa, sb, w.acct, 0, 1, act, w.flow, 0.0, 0.8, 1.0, w.table, w.gears)
     assert w.wallet[0] == pytest.approx(1000.8) and w.wallet[1] == pytest.approx(999.0)
     assert w.flow[0, physics.LOST] == pytest.approx(0.2)
-    tape_[:L] = assemble(["x"] * L)
-    tape_[:6] = assemble("}" * 0 + "{.")[0:2].tolist() + [128] * 4  # head 1 back onto the other's last byte
-    tape_[0] = assemble("{")[0]
-    tape_[1] = assemble(".")[0]                                    # and copy byte 0 there
+    tape_[:L] = 128
+    tape_[0], tape_[1] = assemble("{.")                            # head 1 back onto the other's last byte,
     physics.meet_tape(tape_, 2, band, w.mask, sa, sb, w.acct, 0, 1, act, w.flow, 0.0, 0.8, 1.0, w.table, w.gears)
-    assert tape_[2 * L - 1] == tape_[0]                            # matter moved into the other organism
+    assert tape_[2 * L - 1] == tape_[0]                            # and byte 0 copied there: matter moved
 
 
 def test_without_trading_every_unit_of_energy_is_accounted_for():
     from evotrader.soup import MNEMONIC
     w = Soup(Config(), width=16, height=16, step_s=60, seed=3, metabolism_days=5.0, heat=1e-3, quantum=20.0,
-             divide_at=1050.0)
+             divide_at=1050.0, cycle_days=0.0)
     w.table[w.table == MNEMONIC.index("A")] = 0                   # no orders: energy only moves or is lost
     w.advance(minutes(2000, seed=2))
     f = w.flow.sum(0)
@@ -364,8 +367,8 @@ def test_without_trading_every_unit_of_energy_is_accounted_for():
 
 
 def test_a_world_is_the_same_however_its_ticks_are_chunked_and_resumes_exactly():
-    kw = dict(width=12, height=12, step_s=60, seed=4, heat=1e-4, noise=0.05, mutation=0.05, meetings=0.25,
-              divide_at=1002.0, metabolism_days=30.0)
+    kw = dict(width=12, height=12, step_s=60, seed=4, heat=1e-4, noise=0.05, mutation=0.05, meetings=360.0,
+              divide_at=1002.0, cycle_days=0.1, metabolism_days=30.0, quantum=1.0)
     rows = minutes(900, seed=9)
     a, b = Soup(Config(), **kw), Soup(Config(), **kw)
     a.advance(rows[:400])
@@ -383,7 +386,7 @@ def test_a_world_is_the_same_however_its_ticks_are_chunked_and_resumes_exactly()
 
 
 def test_the_census_tells_who_lives_how_and_where_energy_went():
-    w = Soup(Config(), width=16, height=16, step_s=60, seed=5, divide_at=1100.0, meetings=0.25)
+    w = Soup(Config(), width=16, height=16, step_s=60, seed=5, divide_at=1100.0, meetings=360.0)
     w.advance(minutes(600))
     c = w.census(top=3)
     alive = w.alive.astype(bool)
@@ -402,9 +405,14 @@ def test_a_transplanted_organism_runs_alone_on_unseen_data_and_explains_itself()
     assert e == pytest.approx(w.equity()[s])
     trader = assemble(["x", "S", "A", "[", "-", "]"] + ["x"] * (L - 6))   # long when stream 0 reads above
     trader[0] = 0                                                  # its median; [-] sets the byte back to 0
+    w.acct[physics.GEAR, s] = 4.0
+    w.acct[physics.Q, s], w.acct[physics.ENTRY, s] = -0.01, w.mark       # short 0.01 BTC, at no gain yet
+    w.acct[physics.MARGIN, s] = 0.01 * w.mark / 4
+    w.acct[physics.WALLET, s] = e - w.acct[physics.MARGIN, s]
     itself = sandbox(w, s)                                         # as it was: tape, registers, leverage
     assert (itself.soup[0] == w.soup[s]).all() and (itself.regs[0] == w.regs[s]).all()
-    assert (itself.mask[0] == w.mask[s]).all() and itself.acct[physics.GEAR, 0] == w.acct[physics.GEAR, s]
+    assert (itself.mask[0] == w.mask[s]).all() and itself.acct[physics.GEAR, 0] == 4.0
+    assert itself.pending[0] == pytest.approx(-0.01 * w.mark / e / 4)    # and its position, as a share
     colony = sandbox(w, s, trader, sites=1)
     assert colony.S == 1 and (colony.soup[0] == trader).all() and colony.noise == 0.0
     res = live(colony, minutes(1200, seed=8), every=5)

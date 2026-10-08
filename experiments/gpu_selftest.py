@@ -25,12 +25,12 @@ warnings.filterwarnings("ignore", message="overflow encountered")   # uint64 has
 
 def make(width, height, seed, think=32, meet=128, floor=1.0, divide_at=900.0):
     """A small, busy world: short lives (a one-day cost of living), bodies that divide young (at 900
-    USDT), many births, deaths, displacements and meetings."""
+    USDT, trying every tick), many births, deaths, takeovers, meetings and bites."""
     from evotrader.config import Config
     from evotrader.soup import Soup
     return Soup(Config(), width=width, height=height, step_s=1, seed=seed, think=think, meet=meet,
-                meetings=0.25, metabolism_days=1.0, upkeep=50.0, floor=floor, birth_min=20.0,
-                divide_at=divide_at, mutation=0.05, noise=5.0, heat=1e-4, quantum=20.0)
+                meetings=21600.0, metabolism_days=1.0, upkeep=50.0, floor=floor, birth_min=20.0,
+                divide_at=divide_at, cycle_days=0.0, mutation=0.05, noise=5.0, heat=1e-4, quantum=20.0)
 
 
 def compare(a, b, label):

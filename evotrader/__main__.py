@@ -248,7 +248,7 @@ def cmd_soup(args):
         soup = Soup(cfg, width=args.width, height=args.height, step_s=step_s, seed=args.seed,
                     occupancy=args.occupancy, think=args.think, meet=args.meet, meetings=args.meetings,
                     metabolism_days=args.metabolism, upkeep=args.upkeep, floor=args.floor,
-                    birth_min=args.birth_min, divide_at=args.divide_at,
+                    birth_min=args.birth_min, divide_at=args.divide_at, cycle_days=args.cycle,
                     mutation=args.mutation, noise=args.noise, heat=heat, digestion=args.digestion,
                     quantum=args.bite, matter=matter, layout=args.layout)
         planet = soup.planet
@@ -257,7 +257,7 @@ def cmd_soup(args):
                 "resolution_s": step_s, "width": args.width, "height": args.height,
                 "occupancy": args.occupancy, "think": args.think, "meet": args.meet,
                 "meetings": args.meetings, "metabolism_days": args.metabolism, "upkeep": args.upkeep,
-                "floor": args.floor, "divide_at": soup.divide_at,
+                "floor": args.floor, "divide_at": soup.divide_at, "cycle_days": args.cycle,
                 "birth_min": args.birth_min, "mutation": args.mutation, "noise": args.noise, "heat": heat,
                 "digestion": args.digestion, "bite": args.bite,
                 "days": args.synthetic, "null": args.null, "market_seed": args.market_seed,
@@ -287,7 +287,8 @@ def cmd_soup(args):
                                       max_wall_s=args.max_hours * 3600 if args.max_hours else None)
     took = time.time() - tic
     print(f"{n} ticks in {took:.0f}s ({1000 * took / max(n, 1):.3f} ms a tick); "
-          + ("the data ran out" if finished else "stopped early: --resume carries on"))
+          + {True: "the data ran out", False: "stopped early: --resume carries on",
+             None: "interrupted: --resume carries on"}[finished])
     return finished
 
 
@@ -423,16 +424,23 @@ def main(argv=None):
     p.add_argument("--floor", type=float, default=1.0, help="an organism whose equity falls to this dies (USDT)")
     p.add_argument("--birth-min", type=float, default=100.0, help="least energy a child is born with (USDT)")
     p.add_argument("--divide-at", type=float, default=0.0,
-                   help="a body that grows to this much energy (USDT) divides in half (default: two stakes)")
+                   help="a body holding this much energy (USDT) may divide in half, into an empty site next "
+                        "to it or over a neighbor holding less than the child would (default: two stakes)")
+    p.add_argument("--cycle", type=float, default=1.0,
+                   help="days between a body's tries to divide, at one stake (more often the more it holds); "
+                        "0: every tick")
     p.add_argument("--mutation", type=float, default=1 / 64, help="chance each byte is miscopied at birth")
     p.add_argument("--noise", type=float, default=1e-3, help="chance a byte flips, per byte per day")
     p.add_argument("--think", type=int, default=32, help="instructions an organism's matter runs each tick")
     p.add_argument("--meet", type=int, default=128, help="instructions a meeting of two runs")
-    p.add_argument("--meetings", type=float, default=1 / 16,
-                   help="organisms that wake to meet a neighbor per tick, as a share of all sites, at one stake")
+    p.add_argument("--meetings", type=float, default=90.0,
+                   help="meetings with a neighbor an organism holding one stake starts a day (more the more it "
+                        "holds)")
     p.add_argument("--heat", type=float, default=None,
                    help="energy (USDT) each byte written costs (default 2e-5 on minutes, 1e-6 on seconds)")
-    p.add_argument("--bite", type=float, default=1.0, help="most energy (USDT) one T instruction moves")
+    p.add_argument("--bite", type=float, default=0.0,
+                   help="most energy (USDT) one T instruction moves in a meeting; 0: none, and energy passes "
+                        "between organisms only when a child takes over a weaker neighbor")
     p.add_argument("--digestion", type=float, default=0.8,
                    help="share of energy taken from (or given to) another organism that arrives")
     p.add_argument("--matter", help="start from this matter (.npy of tapes, tiled over the torus) instead of random")
