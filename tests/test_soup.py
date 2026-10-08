@@ -286,11 +286,14 @@ def test_an_organism_that_has_not_closed_a_trade_at_a_profit_for_too_long_goes_h
     assert w.wallet[c] == pytest.approx(1000.0 + 2000.0)           # and everything it held, however much
     assert w.equity().sum() == pytest.approx(w.injected)           # nothing lost
     hungry = world(width=1, height=1, upkeep=1440.0, metabolism_days=float("inf"), starve_days=1.0)
+    hungry.acct[physics.WALLET, 0] = 10_000.0
     hungry.advance(minutes(3))
     assert hungry.acct[physics.MEAL, 0] == pytest.approx(-3.0)     # living is charged to the tally (1 a minute)
+    hungry.advance(minutes(1500)[3:])
+    assert hungry.acct[physics.MEAL, 0] == pytest.approx(-1440.0)  # but a famine owes no more than one hunger
     for entry, owed, meal in ((0.9, 0.0, True), (1.1, 0.0, False), (0.9, 50.0, True), (0.9, 70.0, False)):
-        w = world(width=1, height=1, upkeep=0.0, metabolism_days=float("inf"), starve_days=1.0)
-        rows = minutes(2)
+        w = world(width=1, height=1, upkeep=100.0, metabolism_days=float("inf"), starve_days=1.0)
+        rows = minutes(2)                                          # (one hunger costs 100 USDT of living)
         rows[:, [C["open"], C["high"], C["low"], C["close"], C["mark_high"], C["mark_low"], C["mark_close"]]] = 60_000.0
         w.acct[physics.Q, 0], w.acct[physics.ENTRY, 0] = 0.01, entry * 60_000.0
         w.acct[physics.MARGIN, 0] = 0.01 * entry * 60_000.0
@@ -300,8 +303,8 @@ def test_an_organism_that_has_not_closed_a_trade_at_a_profit_for_too_long_goes_h
         w.acct[physics.PENDING, 0] = 0.0                           # it closes at the next open: +60 USDT, or -60
         w.advance(rows[1:])
         assert w.q[0] == 0 and (w.life[physics.FED, 0] == 1) == meal   # a meal only if it more than makes up
-        assert w.acct[physics.MEAL, 0] == (0.0 if meal else pytest.approx(-owed + 0.01 * (60_000.0 - 0.05 - entry
-                                                                           * 60_000.0) - 0.01 * 59_999.95 * 0.0005))
+        gain = 0.01 * (60_000.0 - 0.05 - entry * 60_000.0) - 0.01 * 59_999.95 * 0.0005
+        assert w.acct[physics.MEAL, 0] == (0.0 if meal else pytest.approx(-owed + gain - 2 * 100.0 / 1440))
 
 
 def test_a_body_that_grows_divides_in_half_and_the_child_carries_on():

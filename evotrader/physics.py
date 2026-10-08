@@ -8,8 +8,9 @@ all at once, with the same result:
 
 live    each living organism alone: its order fills at the open, liquidation,
         funding and the cost of living (a body's upkeep, and Kleiber's law) follow;
-        once its trading since its last meal has paid for its living since, that is
-        a meal. If its energy is gone it is doomed.
+        once its trading since its last meal has paid for its living since (at most
+        the cost of one hunger: a famine is no debt), that is a meal. If its energy
+        is gone it is doomed.
         Otherwise it senses what is happening now, and its own tape runs on from
         where it stopped (a few instructions a tick: matter that thinks). If it is
         large enough and not hungry it may try to divide (about once a cell
@@ -48,7 +49,7 @@ N_SELF = 3                                 # what E reads: energy, position, lev
 
 # rows of the account matrix: one exact BTCUSDT perpetual account per organism, and what its
 # trading has made since its last meal (realized, after fees, funding and liquidations), less
-# what living has cost it since (the cost of living and heat)
+# what living has cost it since (the cost of living and heat), owing at most a hunger's worth
 WALLET, Q, ENTRY, MARGIN, FEES, FUNDING, LEV, PENDING, GEAR, MEAL = range(10)
 N_ACCT = 10
 # rows of the counter matrix: totals at each site, over every organism that lived there
@@ -691,6 +692,9 @@ def live_site(s, tick, r, env, band, acct, counts, flow, soup, regs, mask, alive
         acct[MEAL, s] -= cost
         flow[s, METABOLISM] += cost
         e = e - cost
+        # what it must make to eat is never more than living costs for one hunger
+        if fp[P_STARVE] > 0.0:
+            acct[MEAL, s] = max(acct[MEAL, s], -cost * fp[P_STARVE])
     # once its trading since its last meal has paid for its living since, it has eaten
     if acct[MEAL, s] > 0.0:
         life[FED, s] = tick
