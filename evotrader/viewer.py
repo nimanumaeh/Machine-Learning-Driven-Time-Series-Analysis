@@ -573,13 +573,23 @@ SOUP_KEEP = ("t", "price", "price0", "alive", "alive_by_band", "energy", "energy
 
 def soup_label(meta):
     if meta.get("physics", 1) >= 3:
-        stake = (meta.get("config") or {}).get("initial_capital", 1000.0)
-        name = f"half-life {meta.get('metabolism_days', 365.0):g} d, upkeep {meta.get('upkeep', 1.0):g}/d"
+        cfg = meta.get("config") or {}
+        stake = cfg.get("initial_capital", 1000.0)
+        parts = [f"hungry after {meta['starve_days']:g} d"] if meta.get("starve_days") else []
+        parts.append(f"half-life {meta.get('metabolism_days', 365.0):g} d")
+        if meta.get("upkeep"):
+            parts.append(f"upkeep {meta['upkeep']:g}/d")
         if meta.get("divide_at"):
-            name += f", divides at {meta['divide_at'] / stake:g} stakes"
+            parts.append(f"divides at {meta['divide_at'] / stake:g} stakes")
+        if meta.get("takeover") not in (None, 0.5):
+            parts.append(f"takes over below {meta['takeover']:.0%}")
+        if meta.get("bite"):
+            parts.append(f"bites of {meta['bite']:g}")
+        if cfg.get("taker_fee") == 0 and cfg.get("half_spread") == 0:
+            parts.append("no fees")
         if meta.get("matter"):
-            name += ", seeded with life"
-        return name + " (physics 3)"
+            parts.append("seeded with life")
+        return ", ".join(parts) + " (physics 3)"
     x = meta.get("max_exposure", 1.0)
     name = f"{x:g}x sun"
     if meta.get("heat"):
@@ -940,7 +950,7 @@ td.code { font-family: var(--mono); font-size: 12px; word-break: break-all; lett
 </script>
 """
 
-LIFE_TEMPLATE = r"""<title>BTC Soup Census</title>
+LIFE_TEMPLATE = r"""<title>BTC Organism Census</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,300..800&family=IBM+Plex+Mono:wght@400;500&display=swap">
@@ -953,7 +963,7 @@ td.code { font-family: var(--mono); font-size: 12px; word-break: break-all; lett
 <div class="wrap">
   <header>
     <div>
-      <h1>BTC Soup Census</h1>
+      <h1>BTC Organism Census</h1>
       <div class="run" id="run"></div>
     </div>
     <div class="clock" id="clock"></div>

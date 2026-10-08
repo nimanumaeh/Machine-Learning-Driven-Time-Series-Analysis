@@ -341,7 +341,7 @@ def test_a_body_that_grows_divides_in_half_and_the_child_carries_on():
 
 
 def test_a_child_displaces_and_eats_a_weaker_neighbor_but_not_a_stronger_one():
-    w = world(upkeep=0.0, metabolism_days=float("inf"))
+    w = world(upkeep=0.0, metabolism_days=float("inf"), divide_at=2000.0)
     w.acct[physics.WALLET] = 400.0                                 # weak neighbors all around
     w.acct[physics.WALLET, 4] = 3000.0                             # and one that has grown
     w.injected = float(w.acct[physics.WALLET].sum())
@@ -351,12 +351,12 @@ def test_a_child_displaces_and_eats_a_weaker_neighbor_but_not_a_stronger_one():
     c = born[0]
     assert w.wallet[c] == pytest.approx(1500.0 + 400.0)           # half the parent, and all the displaced held
     assert w.equity()[w.alive.astype(bool)].sum() + w.flow[:, physics.LOST].sum() == pytest.approx(w.injected)
-    strong = world(upkeep=0.0, metabolism_days=float("inf"))
+    strong = world(upkeep=0.0, metabolism_days=float("inf"), divide_at=2000.0)
     strong.acct[physics.WALLET] = 1600.0                           # neighbors stronger than half of 3000
     strong.acct[physics.WALLET, 4] = 3000.0
     strong.advance(minutes(1))
     assert strong.counts["births"] == 0 and strong.counts["deaths"] == 0   # they hold their ground
-    keen = world(upkeep=0.0, metabolism_days=float("inf"), takeover=0.6)
+    keen = world(upkeep=0.0, metabolism_days=float("inf"), divide_at=2000.0, takeover=0.6)
     keen.acct[physics.WALLET] = 1600.0                             # unless takeover is set above 1600 / 3000
     keen.acct[physics.WALLET, 4] = 3000.0
     keen.advance(minutes(1))
@@ -417,7 +417,7 @@ def test_without_trading_every_unit_of_energy_is_accounted_for():
 
 def test_a_world_is_the_same_however_its_ticks_are_chunked_and_resumes_exactly():
     kw = dict(width=12, height=12, step_s=60, seed=4, heat=1e-4, noise=0.05, mutation=0.05, meetings=360.0,
-              divide_at=1002.0, cycle_days=0.1, metabolism_days=30.0, quantum=1.0)
+              divide_at=1002.0, cycle_days=0.1, metabolism_days=30.0, upkeep=1.0, quantum=1.0, starve_days=0.2)
     rows = minutes(900, seed=9)
     a, b = Soup(Config(), **kw), Soup(Config(), **kw)
     a.advance(rows[:400])
@@ -431,7 +431,7 @@ def test_a_world_is_the_same_however_its_ticks_are_chunked_and_resumes_exactly()
         assert np.array_equal(a.soup, x.soup) and np.array_equal(a.acct, x.acct, equal_nan=True)
         assert np.array_equal(a.ids, x.ids) and a.counts == x.counts
     n = a.counts
-    assert n["births"] > 0 and n["deaths"] > 0 and n["meetings"] > 0 and n["orders"] > 0
+    assert n["births"] > 0 and n["deaths"] > 0 and n["meetings"] > 0 and n["orders"] > 0 and n["starved"] > 0
 
 
 def test_the_census_tells_who_lives_how_and_where_energy_went():
@@ -493,7 +493,7 @@ def test_soup_runs_render_as_a_census(tmp_path):
     n = write_soup_viewer(str(run), str(out))
     assert n == len(planet_run.read_census(str(run))) >= 3
     html = out.read_text()
-    assert html.startswith("<!doctype html>") and "<title>BTC Soup Census</title>" in html
+    assert html.startswith("<!doctype html>") and "<title>BTC Organism Census</title>" in html
     data = json.loads(html.split('type="application/json">')[1].split("</script>")[0].replace("<\\/", "</"))
     shown = data["runs"][0]
     assert "physics 3" in shown["label"] and len(shown["frames"]) == n

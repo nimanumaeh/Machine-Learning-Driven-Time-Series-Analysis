@@ -368,13 +368,15 @@ class Soup:
       upkeep           and a body costs this much (USDT a day) whatever it holds: many tiny
                        bodies cost more to keep than one large one
       floor            an organism whose equity falls to this (USDT) dies
-      starve_days      an organism that has not closed a trade at a profit for this many days
-                       starves (it can wait, but not forever; a child is as hungry as its
-                       parent); 0: no one starves
+      starve_days      an organism eats when its trading since its last meal has paid for its
+                       living since; one that has not eaten for this many days is hungry: it
+                       cannot divide, and a fed neighbor's child can take its site and what it
+                       held (it can wait, but not forever; a child is as hungry as its
+                       parent); 0: no hunger
       birth_min        a child needs at least this much (USDT) to be born
       divide_at        a body holding at least this much energy (USDT) may divide in half (as
-                       cells do), into an empty site next to it or over a weaker neighbor:
-                       success becomes offspring; 0 means two stakes
+                       cells do), into an empty site next to it or over a hungry or weaker
+                       neighbor: success becomes offspring; 0 means 0.3 of a stake
       takeover         a neighbor is weaker when it holds less than this share of what the
                        dividing parent holds (0.5: less than the child is given)
       cycle_days       how often a body at one stake tries to divide (more often the more it
@@ -393,7 +395,7 @@ class Soup:
     """
 
     def __init__(self, cfg, width=64, height=64, step_s=60, seed=0, occupancy=0.5, think=32, meet=128,
-                 meetings=90.0, metabolism_days=365.0, upkeep=1.0, floor=1.0, starve_days=0.0, birth_min=100.0,
+                 meetings=90.0, metabolism_days=730.0, upkeep=0.0, floor=1.0, starve_days=30.0, birth_min=100.0,
                  divide_at=0.0, cycle_days=1.0, takeover=0.5, mutation=1 / 64,
                  noise=1e-3, heat=2e-5, digestion=0.8, quantum=0.0, kleiber=0.75, matter=None,
                  layout="symmetric", geography_seed=None):
@@ -408,7 +410,7 @@ class Soup:
         self.metabolism_days, self.floor, self.birth_min = float(metabolism_days), float(floor), float(birth_min)
         self.upkeep = float(upkeep)
         self.starve_days = float(starve_days)
-        self.divide_at = float(divide_at) if divide_at else 2.0 * float(cfg.initial_capital)
+        self.divide_at = float(divide_at) if divide_at else 0.3 * float(cfg.initial_capital)
         self.cycle_days = float(cycle_days)
         self.takeover = float(takeover)
         self.mutation, self.noise, self.heat = float(mutation), float(noise), float(heat)

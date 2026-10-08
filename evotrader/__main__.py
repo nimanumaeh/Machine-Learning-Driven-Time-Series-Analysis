@@ -420,19 +420,19 @@ def main(argv=None):
     p.add_argument("--occupancy", type=float, default=0.5, help="share of sites alive at the start")
     p.add_argument("--minutes", action="store_true",
                    help="live on the minute store (2017 on), a tick a minute; otherwise a tick a second")
-    p.add_argument("--metabolism", type=float, default=365.0,
+    p.add_argument("--metabolism", type=float, default=730.0,
                    help="days in which an organism holding one stake and earning nothing loses half of it "
                         "to Kleiber's law (energy ** 0.75)")
-    p.add_argument("--upkeep", type=float, default=1.0,
+    p.add_argument("--upkeep", type=float, default=0.0,
                    help="what a body costs to keep, whatever it holds (USDT a day)")
-    p.add_argument("--starve", type=float, default=0.0,
-                   help="an organism that has not closed a trade at a profit for this many days starves "
-                        "(0: no one starves)")
+    p.add_argument("--starve", type=float, default=30.0,
+                   help="an organism whose trading has not paid for its living for this many days is hungry: "
+                        "it cannot divide, and a fed neighbor's child can take its place (0: no hunger)")
     p.add_argument("--floor", type=float, default=1.0, help="an organism whose equity falls to this dies (USDT)")
     p.add_argument("--birth-min", type=float, default=100.0, help="least energy a child is born with (USDT)")
     p.add_argument("--divide-at", type=float, default=0.0,
                    help="a body holding this much energy (USDT) may divide in half, into an empty site next "
-                        "to it or over a neighbor holding less than the child would (default: two stakes)")
+                        "to it or over a hungry or weaker neighbor (default: 0.3 of a starting stake)")
     p.add_argument("--takeover", type=float, default=0.5,
                    help="a dividing body's child may take over a neighbor holding less than this share of what "
                         "the parent holds (0.5: less than the child)")
