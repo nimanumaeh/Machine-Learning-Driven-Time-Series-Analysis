@@ -6,10 +6,10 @@ finest resolution there is) has three phases. Within a phase no two sites write
 the same memory, so the CPU loops over the sites one by one and a GPU runs them
 all at once, with the same result:
 
-live    each living organism alone: its order fills at the open, liquidation and
-        funding follow (once its trading since its last meal has made money, that is
-        a meal), then the cost of living (a body's upkeep, and Kleiber's law); if its
-        energy is gone it is doomed.
+live    each living organism alone: its order fills at the open, liquidation,
+        funding and the cost of living (a body's upkeep, and Kleiber's law) follow;
+        once its trading since its last meal has paid for its living since, that is
+        a meal. If its energy is gone it is doomed.
         Otherwise it senses what is happening now, and its own tape runs on from
         where it stopped (a few instructions a tick: matter that thinks). If it is
         large enough and not hungry it may try to divide (about once a cell
@@ -47,7 +47,8 @@ OP_LEFT, OP_RIGHT, OP_LEFT1, OP_RIGHT1, OP_DEC, OP_INC, OP_COPY01, OP_COPY10, \
 N_SELF = 3                                 # what E reads: energy, position, leverage
 
 # rows of the account matrix: one exact BTCUSDT perpetual account per organism, and what its
-# trading has made since its last meal (realized, after fees, funding and liquidations)
+# trading has made since its last meal (realized, after fees, funding and liquidations), less
+# what living has cost it since (the cost of living and heat)
 WALLET, Q, ENTRY, MARGIN, FEES, FUNDING, LEV, PENDING, GEAR, MEAL = range(10)
 N_ACCT = 10
 # rows of the counter matrix: totals at each site, over every organism that lived there
@@ -436,6 +437,7 @@ def think(s, steps, soup, regs, sense, mask, selfs, acct, flow, heat, table, exp
                     ip = 0
                 continue
             acct[WALLET, s] -= heat
+            acct[MEAL, s] -= heat
             flow[s, LOST] += heat
         if c == OP_LEFT:                                   # (wrapping without a division)
             h0 = h0 - 1 if h0 > 0 else n - 1
@@ -536,6 +538,7 @@ def meet_tape(tape, steps, sense, mask, self_a, self_b, acct, a, b, act, flow, h
                 ip += 1
                 continue
             acct[WALLET, me] -= heat
+            acct[MEAL, me] -= heat
             flow[me, LOST] += heat
         if c == OP_LEFT:
             h0 = (h0 - 1 + n) % n
@@ -680,17 +683,18 @@ def live_site(s, tick, r, env, band, acct, counts, flow, soup, regs, mask, alive
     if f != 0.0 and f == f:
         acct[MEAL, s] -= acct[Q, s] * mark * f
         fund(s, f, mark, acct)
-    # once its trading since its last meal has made money, it has eaten
-    if acct[MEAL, s] > 0.0:
-        life[FED, s] = tick
-        acct[MEAL, s] = 0.0
     # living costs energy: the upkeep of a body, and Kleiber's three quarters of what it holds
     e = equity(s, mark, acct)
     if e > 0.0:
         cost = min(fp[P_UPKEEP] + fp[P_METABOLISM] * math.sqrt(e) * math.sqrt(math.sqrt(e)), e)
         acct[WALLET, s] -= cost
+        acct[MEAL, s] -= cost
         flow[s, METABOLISM] += cost
         e = e - cost
+    # once its trading since its last meal has paid for its living since, it has eaten
+    if acct[MEAL, s] > 0.0:
+        life[FED, s] = tick
+        acct[MEAL, s] = 0.0
     if not (e > fp[P_FLOOR]):
         doomed[s] = 1                                      # nothing left to live on
         return
@@ -802,10 +806,12 @@ def birth_site(s, tick, buf, r, env, acct, counts, flow, soup, regs, alive, doom
             eaten = occupant                               # what it held (closed at the mark)
             flow[s, CARCASS] -= occupant                   # (die() counts it as left behind)
         die(s, mark, acct, counts, flow, soup, regs, alive, doomed, ids)
-    # the child takes its share of everything the parent holds: cash, position and margin
-    w = share * acct[WALLET, p]
-    q = share * acct[Q, p]
-    m = share * acct[MARGIN, p]
+    # the child takes its share of everything the parent holds: its position in whole lots
+    # (with their margin), and cash for the rest
+    qp = acct[Q, p]
+    q = sign(qp) * math.floor(abs(qp) * share / fp[P_STEP] + _EPS) * fp[P_STEP]
+    m = acct[MARGIN, p] * (q / qp) if qp != 0.0 else 0.0
+    w = give - (m + q * (mark - acct[ENTRY, p]))
     meal = share * acct[MEAL, p]
     acct[WALLET, p] -= w
     acct[Q, p] -= q
@@ -826,7 +832,7 @@ def birth_site(s, tick, buf, r, env, acct, counts, flow, soup, regs, alive, doom
     acct[WALLET, s] = w + eaten
     flow[s, TAKEN] += eaten
     acct[Q, s] = q
-    acct[ENTRY, s] = acct[ENTRY, p]
+    acct[ENTRY, s] = acct[ENTRY, p] if q != 0.0 else 0.0
     acct[MARGIN, s] = m
     acct[PENDING, s] = acct[PENDING, p]
     acct[GEAR, s] = acct[GEAR, p]

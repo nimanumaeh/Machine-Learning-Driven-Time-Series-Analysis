@@ -285,6 +285,9 @@ def test_an_organism_that_has_not_closed_a_trade_at_a_profit_for_too_long_goes_h
     c = int(np.nonzero(w.life[physics.GEN] == 1)[0][0])
     assert w.wallet[c] == pytest.approx(1000.0 + 2000.0)           # and everything it held, however much
     assert w.equity().sum() == pytest.approx(w.injected)           # nothing lost
+    hungry = world(width=1, height=1, upkeep=1440.0, metabolism_days=float("inf"), starve_days=1.0)
+    hungry.advance(minutes(3))
+    assert hungry.acct[physics.MEAL, 0] == pytest.approx(-3.0)     # living is charged to the tally (1 a minute)
     for entry, owed, meal in ((0.9, 0.0, True), (1.1, 0.0, False), (0.9, 50.0, True), (0.9, 70.0, False)):
         w = world(width=1, height=1, upkeep=0.0, metabolism_days=float("inf"), starve_days=1.0)
         rows = minutes(2)
@@ -326,6 +329,15 @@ def test_a_body_that_grows_divides_in_half_and_the_child_carries_on():
     assert np.array_equal(w.soup[c], w.soup[4]) and np.array_equal(w.regs[c], w.regs[4])   # same mind, same place in it
     assert w.equity()[[4, c]].sum() == pytest.approx(before - w.flow[[4, c], physics.METABOLISM].sum()
                                                      - w.flow[[4, c], physics.LOST].sum(), rel=1e-9)
+    odd = world(occupancy=0.0, upkeep=0.0, metabolism_days=float("inf"))
+    odd.alive[4] = 1
+    odd.acct[physics.WALLET, 4], odd.acct[physics.Q, 4] = 2600.0, 0.003     # three lots of 0.001 BTC
+    odd.acct[physics.ENTRY, 4], odd.acct[physics.MARGIN, 4] = 50_000.0, 150.0
+    odd.mark = rows[0, C["close"]]
+    odd.advance(rows)
+    c = [s for s in range(9) if s != 4 and odd.alive[s]][0]
+    assert odd.q[c] == pytest.approx(0.001) and odd.q[4] == pytest.approx(0.002)   # positions split in whole lots
+    assert odd.equity()[c] == pytest.approx(odd.equity()[4])        # and cash evens out the halves
 
 
 def test_a_child_displaces_and_eats_a_weaker_neighbor_but_not_a_stronger_one():
